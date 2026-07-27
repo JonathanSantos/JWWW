@@ -9,21 +9,26 @@ import { loadSourceMapFromUrl, originalNameAt, type LoadedSourceMap } from '@/li
 import { openOverrideInEditor } from '@/lib/editor'
 import type { MapFunction } from '@shared/types'
 
+const LIMITE_VISIVEL = 400
+
 type Linha = {
   fn: MapFunction
   calls: number
-  ms: number
+  /** tempo sem contar o que as funções chamadas gastaram */
+  proprio: number
+  total: number
   ordem: number
   /** nome resolvido pelo source map, quando disponível */
   nome: string
   local: string | null
 }
 
-type Ordenacao = 'chamadas' | 'tempo' | 'primeira'
+type Ordenacao = 'chamadas' | 'proprio' | 'total' | 'primeira'
 
 const ORDENACOES: Array<{ valor: Ordenacao; rotulo: string }> = [
   { valor: 'chamadas', rotulo: 'mais chamadas' },
-  { valor: 'tempo', rotulo: 'mais tempo' },
+  { valor: 'proprio', rotulo: 'mais tempo próprio' },
+  { valor: 'total', rotulo: 'mais tempo total' },
   { valor: 'primeira', rotulo: 'ordem de execução' }
 ]
 
@@ -63,8 +68,10 @@ export function MapPanel() {
     }
   }, [catalogo?.url, catalogo?.sourceMappingUrl])
 
-  const { linhas, totalExecutadas, maiorChamadas } = useMemo(() => {
-    if (!catalogo || !fileId) return { linhas: [] as Linha[], totalExecutadas: 0, maiorChamadas: 0 }
+  const { linhas, totalFiltradas, totalExecutadas, maiorChamadas } = useMemo(() => {
+    if (!catalogo || !fileId) {
+      return { linhas: [] as Linha[], totalFiltradas: 0, totalExecutadas: 0, maiorChamadas: 0 }
+    }
     const cont = contagens[fileId] ?? {}
 
     const todas: Linha[] = catalogo.functions.map((fn) => {
@@ -73,7 +80,8 @@ export function MapPanel() {
       return {
         fn,
         calls: c?.calls ?? 0,
-        ms: c?.ms ?? 0,
+        proprio: c?.proprio ?? 0,
+        total: c?.total ?? 0,
         ordem: c?.ordem ?? Number.MAX_SAFE_INTEGER,
         nome: original?.name || fn.name || '(anônima)',
         local: original ? `${original.file}:${original.line}` : `linha ${fn.line}`
@@ -91,13 +99,17 @@ export function MapPanel() {
       : base
 
     const ordenadas = [...filtradas].sort((a, b) => {
-      if (ordenacao === 'tempo') return b.ms - a.ms || b.calls - a.calls
+      if (ordenacao === 'proprio') return b.proprio - a.proprio || b.calls - a.calls
+      if (ordenacao === 'total') return b.total - a.total || b.calls - a.calls
       if (ordenacao === 'primeira') return a.ordem - b.ordem
-      return b.calls - a.calls || b.ms - a.ms
+      return b.calls - a.calls || b.proprio - a.proprio
     })
 
     return {
-      linhas: ordenadas,
+      // Renderizar milhares de linhas trava a UI, que é justamente o caso de um
+      // bundle grande. O corte vem depois da ordenação, então o topo é o certo.
+      linhas: ordenadas.slice(0, LIMITE_VISIVEL),
+      totalFiltradas: ordenadas.length,
       totalExecutadas: executadas.length,
       maiorChamadas: executadas.reduce((max, l) => Math.max(max, l.calls), 0)
     }
@@ -224,6 +236,12 @@ export function MapPanel() {
               : 'Nenhuma função corresponde ao filtro.'}
           </p>
         )}
+        {totalFiltradas > linhas.length && (
+          <div className="px-2 py-1 text-[10px] text-muted-foreground">
+            mostrando as {linhas.length} primeiras de {totalFiltradas.toLocaleString('pt-BR')} — use o
+            filtro para chegar no resto
+          </div>
+        )}
         {linhas.map((l) => {
           const proporcao = maiorChamadas > 0 ? l.calls / maiorChamadas : 0
           return (
@@ -247,8 +265,11 @@ export function MapPanel() {
               <FileCode2 className="relative h-3 w-3 shrink-0 text-muted-foreground/60" />
               <span className="relative min-w-0 flex-1 truncate font-mono">{l.nome}</span>
               <span className="relative shrink-0 font-mono text-[10px] text-muted-foreground">{l.local}</span>
-              <span className="relative w-14 shrink-0 text-right tabular-nums text-muted-foreground">
-                {l.ms > 0 ? formatarMs(l.ms) : '—'}
+              <span
+                className="relative w-14 shrink-0 text-right tabular-nums text-muted-foreground"
+                title={l.total > 0 ? `próprio ${formatarMs(l.proprio)} · total ${formatarMs(l.total)}` : undefined}
+              >
+                {l.proprio > 0 ? formatarMs(l.proprio) : l.calls > 0 ? '~0' : '—'}
               </span>
               <span
                 className={cn(

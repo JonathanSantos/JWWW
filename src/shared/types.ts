@@ -68,10 +68,16 @@ export type MapCatalogEvent = {
   functions: MapFunction[]
 }
 
-/** Lote agregado na página: [arquivo, id, chamadas, milissegundos] */
+/**
+ * Lote agregado na página:
+ * [arquivo, id, chamadas, msPróprio, msTotal, ordemDeEstreia]
+ *
+ * `próprio` desconta o tempo gasto dentro das funções chamadas; `total` inclui.
+ * É a diferença entre "esta função é cara" e "esta função chama coisa cara".
+ */
 export type MapCountsEvent = {
   tabId: number
-  lote: Array<[string, number, number, number]>
+  lote: Array<[string, number, number, number, number, number]>
 }
 
 export type OverrideStatusEvent = {
@@ -161,5 +167,5 @@ export interface JwwwApi {
     channel: 'overrides:changed' | 'scripts:changed' | 'rules:changed' | 'workspaces:changed',
     cb: () => void
   ): () => void
-  on(channel: 'ui:toggle-panel', cb: () => void): () => void
+  on(channel: 'ui:toggle-panel' | 'ui:focus-url', cb: () => void): () => void
 }

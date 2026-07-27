@@ -136,7 +136,23 @@ function applyExpose(
  * (originalText -> editedText) sobre o corpo que o servidor entregou agora.
  */
 export class OverrideEngine {
+  /**
+   * `patch_make` roda um diff sobre o arquivo inteiro. Como original e editado
+   * só mudam quando o dev salva, guardamos os patches por override — senão o
+   * diff de um bundle grande é refeito a cada requisição interceptada.
+   */
+  private patchesPorOverride = new Map<string, { assinatura: string; patches: unknown[] }>()
+
   constructor(private getAll: () => OverrideEntry[]) {}
+
+  private patchesDe(o: OverrideEntry): unknown[] {
+    const assinatura = `${o.updatedAt}:${o.originalText.length}:${o.editedText?.length ?? 0}`
+    const guardado = this.patchesPorOverride.get(o.id)
+    if (guardado && guardado.assinatura === assinatura) return guardado.patches
+    const patches = dmp.patch_make(o.originalText, o.editedText ?? '')
+    this.patchesPorOverride.set(o.id, { assinatura, patches })
+    return patches
+  }
 
   enabledFor(url: string): OverrideEntry[] {
     const key = stripHash(url)
@@ -164,8 +180,8 @@ export class OverrideEngine {
         results.push({ ...base, status: 'applied' })
         continue
       }
-      const patches = dmp.patch_make(o.originalText, o.editedText)
-      const [patched, oks] = dmp.patch_apply(patches, text) as [string, boolean[]]
+      const patches = this.patchesDe(o)
+      const [patched, oks] = dmp.patch_apply(patches as never, text) as [string, boolean[]]
       if (oks.length > 0 && oks.every(Boolean)) {
         text = patched
         results.push({

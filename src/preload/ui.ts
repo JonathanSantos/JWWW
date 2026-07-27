@@ -13,7 +13,8 @@ const EVENT_CHANNELS = new Set([
   'scripts:changed',
   'rules:changed',
   'workspaces:changed',
-  'ui:toggle-panel'
+  'ui:toggle-panel',
+  'ui:focus-url'
 ])
 
 const invoke = (channel: string, ...args: unknown[]) => ipcRenderer.invoke(channel, ...args)

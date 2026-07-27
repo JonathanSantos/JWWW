@@ -73,6 +73,12 @@ O topo do painel dá o número que interessa — "127 de 1.243 funções executa
 olho sem comparar números. Dá para ordenar por chamadas, por tempo ou por ordem
 de execução, e marcar "incluir as que nunca rodaram" para ver o código morto.
 
+O tempo é medido em duas formas, e a diferença importa: **próprio** desconta o
+que as funções chamadas gastaram, **total** inclui. Ordenar por total sempre
+levaria as funções mais externas ao topo — elas herdam o tempo de tudo que
+chamam. Por próprio você acha quem realmente queima CPU. A coluna mostra o
+próprio; o total aparece ao passar o mouse.
+
 **O fluxo que vale a pena:** clique em *Zerar contadores*, interaja com o site,
 e o painel mostra só o que aquela ação disparou. É como achar o código de um
 botão em segundos, sem caçar handler no meio do bundle.

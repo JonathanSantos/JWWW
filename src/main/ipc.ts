@@ -283,7 +283,11 @@ export function registerIpc(ctx: IpcContext) {
   })
 
   const MapCountsSchema = z.object({
-    lote: z.array(z.tuple([z.string().max(64), z.number(), z.number(), z.number()])).max(20_000)
+    lote: z
+      .array(
+        z.tuple([z.string().max(64), z.number(), z.number(), z.number(), z.number(), z.number()])
+      )
+      .max(20_000)
   })
 
   ipcMain.on('jwww:map', (e, payload: unknown) => {

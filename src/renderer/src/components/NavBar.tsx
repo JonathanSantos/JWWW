@@ -29,6 +29,14 @@ export function NavBar() {
     }
   }, [active?.id, active?.url])
 
+  // ⌘L: o atalho que todo navegador tem para ir direto ao endereço
+  useEffect(() => {
+    return window.api.on('ui:focus-url', () => {
+      inputRef.current?.focus()
+      inputRef.current?.select()
+    })
+  }, [])
+
   const host = active ? hostOf(active.url) : ''
   const overridesForHost = overrides.filter(
     (o) => o.enabled && host && hostOf(o.pattern ?? o.url) === host

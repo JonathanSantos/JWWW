@@ -15,6 +15,9 @@ import type { OverrideStatus } from '@shared/types'
 export const MAP_RUNTIME = `;(() => {
   if (globalThis.__jwwwMap) return;
   var contadores = new Map();
+  var ordemDeEstreia = new Map();
+  var proximaOrdem = 0;
+  var pilha = [];
   var agendado = false;
   var agora = (globalThis.performance && performance.now) ? function () { return performance.now() } : function () { return 0 };
 
@@ -22,7 +25,9 @@ export const MAP_RUNTIME = `;(() => {
     agendado = false;
     if (contadores.size === 0) return;
     var lote = [];
-    contadores.forEach(function (v) { lote.push([v.arquivo, v.id, v.c, Math.round(v.t * 100) / 100]) });
+    contadores.forEach(function (v) {
+      lote.push([v.arquivo, v.id, v.c, Math.round(v.proprio * 100) / 100, Math.round(v.total * 100) / 100, v.ordem]);
+    });
     contadores.clear();
     try {
       if (globalThis.__jwwwBridge) globalThis.__jwwwBridge.map({ lote: lote });
@@ -31,10 +36,18 @@ export const MAP_RUNTIME = `;(() => {
 
   // A chave inclui o arquivo: dois bundles mapeados numerariam suas funções a
   // partir de zero e as contagens se misturariam.
-  function registrar(arquivo, id, ms) {
+  function registrar(arquivo, id, proprio, total) {
     var chave = arquivo + '|' + id;
+    var ordem = ordemDeEstreia.get(chave);
+    if (ordem === undefined) {
+      // A ordem é atribuída na primeira execução de verdade e sobrevive aos
+      // lotes — a posição dentro do lote diria só quem chegou naquela janela.
+      ordem = proximaOrdem++;
+      ordemDeEstreia.set(chave, ordem);
+    }
     var e = contadores.get(chave);
-    if (e) { e.c++; e.t += ms } else { contadores.set(chave, { arquivo: arquivo, id: id, c: 1, t: ms }) }
+    if (e) { e.c++; e.proprio += proprio; e.total += total }
+    else { contadores.set(chave, { arquivo: arquivo, id: id, c: 1, proprio: proprio, total: total, ordem: ordem }) }
     if (!agendado) { agendado = true; setTimeout(enviar, 400) }
   }
 
@@ -42,12 +55,20 @@ export const MAP_RUNTIME = `;(() => {
     if (typeof fn !== 'function') return fn;
     function embrulho() {
       var t0 = agora();
+      // Cada quadro acumula o tempo dos filhos, para descontá-lo no fim: sem
+      // isso toda função externa herdaria o tempo de tudo que ela chama e o
+      // ranking por tempo viraria a ordem de aninhamento.
+      var quadro = { filhos: 0 };
+      pilha.push(quadro);
       try {
         // sem isto, \`new Classe()\` deixaria de construir
         if (new.target) return Reflect.construct(fn, arguments, new.target);
         return fn.apply(this, arguments);
       } finally {
-        registrar(arquivo, id, agora() - t0);
+        var total = agora() - t0;
+        pilha.pop();
+        if (pilha.length) pilha[pilha.length - 1].filhos += total;
+        registrar(arquivo, id, total - quadro.filhos, total);
       }
     }
     try {

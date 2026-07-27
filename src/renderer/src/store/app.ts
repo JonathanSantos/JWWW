@@ -50,8 +50,11 @@ type AppState = {
   watchLog: WatchEvent[]
   /** catálogo de funções instrumentadas, por fileId (uma instrumentação) */
   mapCatalogs: Record<string, MapCatalogEvent>
-  /** contagens: fileId -> id da função -> { chamadas, ms, ordem de primeira execução } */
-  mapCounts: Record<string, Record<number, { calls: number; ms: number; ordem: number }>>
+  /** contagens: fileId -> id da função -> tempos e ordem de estreia */
+  mapCounts: Record<
+    string,
+    Record<number, { calls: number; proprio: number; total: number; ordem: number }>
+  >
   files: EditorFile[]
   activeFileUrl: string | null
 
@@ -101,7 +104,29 @@ export const useApp = create<AppState>((set) => ({
   files: [],
   activeFileUrl: null,
 
-  setTabs: (tabs) => set({ tabs }),
+  /**
+   * Aba fechada tem que levar embora o log de rede e os catálogos do mapa dela.
+   * Sem isso, uma sessão longa acumula centenas de entradas e catálogos de
+   * milhares de funções que ninguém mais consegue ver.
+   */
+  setTabs: (tabs) =>
+    set((s) => {
+      const vivas = new Set(tabs.map((t) => t.id))
+      const sobrou = Object.keys(s.net).some((id) => !vivas.has(Number(id)))
+      const catalogosMortos = Object.entries(s.mapCatalogs).filter(([, c]) => !vivas.has(c.tabId))
+      if (!sobrou && catalogosMortos.length === 0) return { tabs }
+
+      const net = Object.fromEntries(
+        Object.entries(s.net).filter(([id]) => vivas.has(Number(id)))
+      )
+      const mapCatalogs = Object.fromEntries(
+        Object.entries(s.mapCatalogs).filter(([, c]) => vivas.has(c.tabId))
+      )
+      const mapCounts = Object.fromEntries(
+        Object.entries(s.mapCounts).filter(([fileId]) => mapCatalogs[fileId] !== undefined)
+      )
+      return { tabs, net, mapCatalogs, mapCounts }
+    }),
 
   upsertNet: (entries) =>
     set((s) => {
@@ -175,12 +200,18 @@ export const useApp = create<AppState>((set) => ({
   addMapCounts: (ev) =>
     set((s) => {
       const porArquivo = { ...s.mapCounts }
-      for (const [fileId, id, calls, ms] of ev.lote) {
+      for (const [fileId, id, calls, proprio, total, ordem] of ev.lote) {
         const atual = { ...(porArquivo[fileId] ?? {}) }
         const anterior = atual[id]
         atual[id] = anterior
-          ? { calls: anterior.calls + calls, ms: anterior.ms + ms, ordem: anterior.ordem }
-          : { calls, ms, ordem: Object.keys(atual).length }
+          ? {
+              calls: anterior.calls + calls,
+              proprio: anterior.proprio + proprio,
+              total: anterior.total + total,
+              // a estreia é a primeira que vimos, não a do lote mais recente
+              ordem: Math.min(anterior.ordem, ordem)
+            }
+          : { calls, proprio, total, ordem }
         porArquivo[fileId] = atual
       }
       return { mapCounts: porArquivo }

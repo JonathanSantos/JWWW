@@ -168,6 +168,12 @@ function buildMenu() {
       label: 'Navegação',
       submenu: [
         {
+          label: 'Ir para o endereço',
+          accelerator: 'CmdOrCtrl+L',
+          click: () => uiSend('ui:focus-url')
+        },
+        { type: 'separator' },
+        {
           label: 'Recarregar',
           accelerator: 'CmdOrCtrl+R',
           click: () => {

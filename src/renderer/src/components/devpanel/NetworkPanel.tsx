@@ -22,6 +22,9 @@ function statusColor(status?: number, blocked?: boolean, error?: string) {
 
 const EMPTY: never[] = []
 
+/** Renderizar centenas de linhas de uma vez engasga a UI num site movimentado. */
+const LIMITE_VISIVEL = 300
+
 export function NetworkPanel() {
   const active = useActiveTab()
   const entries = useApp((s) => (active ? s.net[active.id] : undefined)) ?? EMPTY
@@ -35,7 +38,9 @@ export function NetworkPanel() {
     window.api.net.getDisableCsp().then(setNoCsp)
   }, [])
 
-  const filtered = entries.filter((e) => !query || e.url.toLowerCase().includes(query.toLowerCase()))
+  const todas = entries.filter((e) => !query || e.url.toLowerCase().includes(query.toLowerCase()))
+  // As mais recentes são as que interessam, então o corte é no começo da lista.
+  const filtered = todas.slice(-LIMITE_VISIVEL)
 
   const addRule = (pattern: string) => {
     const p = pattern.trim()
@@ -141,6 +146,11 @@ export function NetworkPanel() {
           <p className="p-4 text-center font-sans text-xs text-muted-foreground">
             Nenhuma requisição capturada.
           </p>
+        )}
+        {todas.length > filtered.length && (
+          <div className="px-2 py-1 font-sans text-[10px] text-muted-foreground">
+            mostrando as {filtered.length} mais recentes de {todas.length} — use o filtro para as demais
+          </div>
         )}
         {filtered.map((e) => (
           <div

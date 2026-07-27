@@ -170,3 +170,52 @@ test('desligar o mapeamento remove a instrumentação', async () => {
   )
   expect(instrumentado, 'o arquivo servido volta ao original').toBe(false)
 })
+
+test('separa tempo próprio de tempo total', async () => {
+  // `externa` quase não faz nada sozinha; `interna` é que queima CPU.
+  // Com tempo inclusivo, `externa` apareceria no topo — o que é enganoso.
+  site = await new FixtureSite()
+    .set('/', INDEX)
+    .js(
+      '/app.js',
+      `function interna() {
+         var s = 0;
+         for (var i = 0; i < 3000000; i++) s += i;
+         return s;
+       }
+       function externa() { return interna() }
+       window.externa = externa;
+       document.addEventListener("DOMContentLoaded", function () { externa() });`
+    )
+    .start()
+  app = await launchApp({ startUrl: site.url('/') })
+  await abrirArquivo(app, site.url('/app.js'))
+
+  await app.ui.getByRole('button', { name: 'Mapear' }).click()
+  await expect
+    .poll(() => app!.readStore<OverrideEntry>('overrides').filter((o) => o.kind === 'map').length, {
+      timeout: 15_000
+    })
+    .toBe(1)
+  await app.reloadPage()
+  await app.openPanel('Mapa')
+  await expect(app.ui.getByText('interna')).toBeVisible({ timeout: 25_000 })
+
+  // por tempo próprio, quem queima CPU tem que vir na frente
+  await app.ui.getByRole('combobox').last().selectOption('proprio')
+  const ordemPropria = await app.ui.locator('[title*="offset"]').allInnerTexts()
+  const idxInterna = ordemPropria.findIndex((t) => t.includes('interna'))
+  const idxExterna = ordemPropria.findIndex((t) => t.includes('externa'))
+  expect(idxInterna, 'interna deve existir na lista').toBeGreaterThanOrEqual(0)
+  expect(idxExterna, 'externa deve existir na lista').toBeGreaterThanOrEqual(0)
+  expect(idxInterna, 'por tempo próprio, interna vem antes de externa').toBeLessThan(idxExterna)
+
+  // por tempo total, a de fora engloba a de dentro e sobe
+  await app.ui.getByRole('combobox').last().selectOption('total')
+  const ordemTotal = await app.ui.locator('[title*="offset"]').allInnerTexts()
+  expect(
+    ordemTotal.findIndex((t) => t.includes('externa')),
+    'por tempo total, externa vem antes de interna'
+  ).toBeLessThan(ordemTotal.findIndex((t) => t.includes('interna')))
+
+})
