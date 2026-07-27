@@ -206,7 +206,21 @@ export class TabDebugger {
         const rule = this.deps.getRules().find((r) => ruleMatches(r, url))
         if (rule) {
           if (params.networkId) {
-            this.upsert(params.networkId, { blocked: true, error: `bloqueado (${rule.pattern})` })
+            // Fetch.requestPaused pode chegar antes de Network.requestWillBeSent;
+            // sem criar a entrada aqui, a marcação de bloqueio se perde e o dev
+            // vê só uma requisição falhada, sem saber que foi o JWWW.
+            this.upsert(
+              params.networkId,
+              { blocked: true, error: `bloqueado (${rule.pattern})` },
+              {
+                id: params.networkId,
+                tabId: this.tabId,
+                url,
+                method: params.request?.method ?? 'GET',
+                resourceType: params.resourceType ?? 'Other',
+                startTime: Date.now()
+              }
+            )
           }
           await this.send('Fetch.failRequest', { requestId, errorReason: 'BlockedByClient' })
           return

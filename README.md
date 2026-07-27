@@ -9,7 +9,9 @@ injetados no mundo da página e controle de rede.
 ```bash
 npm install
 npm run dev        # dev com HMR na UI e restart do main
-npm run test       # mapeamento da formatação e casamento de glob (quebrar aqui corrompe arquivo)
+npm run test       # tudo: unitários + e2e
+npm run test:unit  # mapeamento da formatação e casamento de glob (quebrar aqui corrompe arquivo)
+npm run test:e2e   # Playwright dirigindo o app de verdade (faz build antes)
 npm run typecheck  # tsc no main + renderer
 npm run build      # build de produção em out/
 ```
@@ -138,6 +140,18 @@ importar duas vezes não sobrescreve nada.
 Painel **Rede**: log completo por aba, bloqueio por padrão (`*analytics*` ou substring), throttling
 (Fast/Slow 3G, offline), tamanhos e tempos. Cache HTTP e service workers são bypassados enquanto o
 console está ativo (como o "Disable cache" do DevTools) para a interceptação ser confiável.
+
+## Testes
+
+`npm run test:e2e` sobe o app empacotado com o Playwright (`_electron`) e exercita
+os fluxos de verdade: abrir arquivo pela árvore, formatar, editar, salvar, expor
+global, diff, sessões. As páginas de teste vêm de um servidor HTTP em memória
+(`tests/e2e/helpers/server.ts`) cujos arquivos são mutáveis, o que permite
+simular um deploy no meio do teste.
+
+Cada teste roda com `userData` próprio num diretório temporário. Isso mantém os
+seus overrides reais intocados e, de quebra, faz o lock de instância única (que
+é por `userData`) não brigar com um JWWW aberto na máquina.
 
 ## O que já foi verificado rodando
 
