@@ -126,10 +126,13 @@ export function registerIpc(ctx: IpcContext) {
   handleUi('overrides:list', () => ctx.overridesStore.all())
   handleUi('overrides:save', (entry: unknown) => {
     ctx.overridesStore.upsert(OverrideEntrySchema.parse(entry))
+    // Um override de observação decide se o runtime é injetado nas páginas.
+    ctx.refreshScripts()
     uiSend('overrides:changed')
   })
   handleUi('overrides:remove', (id: unknown) => {
     ctx.overridesStore.remove(z.string().parse(id))
+    ctx.refreshScripts()
     uiSend('overrides:changed')
   })
 
@@ -239,6 +242,27 @@ export function registerIpc(ctx: IpcContext) {
     broadcast(topic, data, { tabId: -1, origin: 'jwww://ui' })
   })
   handleUi('bus:history', () => busHistory)
+
+  // --- eventos de observação vindos do runtime injetado nas páginas ---
+  const WatchEventSchema = z.object({
+    label: z.string().max(200),
+    kind: z.enum(['call', 'value']),
+    at: z.number(),
+    url: z.string(),
+    args: z.unknown().optional(),
+    result: z.unknown().optional(),
+    error: z.unknown().optional(),
+    ms: z.number().optional(),
+    async: z.boolean().optional(),
+    stack: z.string().nullable().optional()
+  })
+
+  ipcMain.on('jwww:watch', (e, payload: unknown) => {
+    if (!ctx.tabs.isPageWebContents(e.sender)) return
+    const parsed = WatchEventSchema.safeParse(payload)
+    if (!parsed.success) return
+    uiSend('watch:event', { ...parsed.data, tabId: e.sender.id })
+  })
 
   // Páginas emitem pelo preload delas (fire-and-forget).
   ipcMain.on('jwww:bus:emit', (e, payload: unknown) => {

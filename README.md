@@ -57,6 +57,34 @@ textual (com contexto antes/depois). No próximo reload o arquivo é patchado em
 - O arquivo transformado é validado com acorn; se a sintaxe quebrasse, reverte e avisa.
 - Âncora não encontrada (site mudou) → serve original e avisa.
 
+### Observar execução
+
+Selecione uma função ou expressão no editor e use **Observar**. A cada execução,
+o painel **Observar** registra argumentos, retorno, duração e — opcionalmente —
+quem chamou. Funciona com `async` (espera a promise resolver) e com exceções,
+que continuam sendo lançadas normalmente para a página.
+
+Enquanto o `Expor global` responde *"qual é o valor disso"*, observar responde
+*"quando isso roda e com quê"* — sem precisar recolocar um breakpoint a cada
+reload.
+
+O trecho é reconhecido por AST, então o diálogo já diz o que você selecionou
+(`função async buscarNome(id)`), sugere o nome como rótulo e recusa o que não dá
+para instrumentar com segurança.
+
+### AST: entender e localizar, nunca gerar
+
+`src/shared/analyze.ts` faz o parse com acorn e devolve **offsets**. É uma regra
+do projeto: nada regenera código a partir da árvore. Regenerar produziria um
+arquivo com formatação diferente da original e destruiria o fuzzy patch, que é a
+base de todo o resto. Sabendo que a seleção é uma `FunctionDeclaration` chamada
+`soma` que começa no offset 412, a edição é textual e cirúrgica — o resto do
+arquivo continua byte a byte igual ao que o servidor entregou.
+
+Isso também melhorou o `Expor global`: antes ele classificava o trecho isolado
+(onde `{a: 1}` parece um bloco); agora usa a árvore do arquivo inteiro, que sabe
+o que o trecho é no contexto dele.
+
 ### Bus entre abas
 
 Toda página recebe `window.jwww.bus` via preload (contextBridge):
@@ -168,6 +196,8 @@ seus overrides reais intocados e, de quebra, faz o lock de instância única (qu
 - Formatação: arquivo minificado formatado no editor, editado ali, salvo — e o
   override gravado em disco continua em uma linha só, com apenas a mudança do dev.
 - Árvore de recursos com pastas aninhadas e colapso de pasta única (`js/vendor`).
+- Observar: função instrumentada registra cada chamada com argumentos e retorno,
+  sem alterar o valor que chega a quem chamou nem engolir exceções.
 - Glob: override criado em `app.a3f9b1.js` continuou valendo em `app.ff0099.js`
   depois de um "deploy" que trocou nome **e** conteúdo do bundle.
 - Diff nos dois modos, com o modo servidor buscando o corpo real do site

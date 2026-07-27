@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { BusMessage, NetEntry, OverrideStatusEvent, TabState } from '@shared/types'
+import type { BusMessage, NetEntry, OverrideStatusEvent, TabState, WatchEvent } from '@shared/types'
 import type { NetRule, OverrideEntry, UserScript, Workspace } from '@shared/schemas'
 
 import type { PrettyAnchor } from '@/lib/prettify'
@@ -31,6 +31,7 @@ type AppState = {
   workspaces: Workspace[]
   statuses: OverrideStatusEvent[]
   busLog: BusMessage[]
+  watchLog: WatchEvent[]
   files: EditorFile[]
   activeFileUrl: string | null
 
@@ -46,6 +47,8 @@ type AppState = {
   pushStatus: (ev: OverrideStatusEvent) => void
   pushBus: (m: BusMessage) => void
   setBusLog: (m: BusMessage[]) => void
+  pushWatch: (e: WatchEvent) => void
+  clearWatchLog: () => void
   openFile: (f: EditorFile) => void
   closeFile: (url: string) => void
   setActiveFile: (url: string) => void
@@ -66,6 +69,7 @@ export const useApp = create<AppState>((set) => ({
   workspaces: [],
   statuses: [],
   busLog: [],
+  watchLog: [],
   files: [],
   activeFileUrl: null,
 
@@ -104,6 +108,10 @@ export const useApp = create<AppState>((set) => ({
 
   pushBus: (m) => set((s) => ({ busLog: [...s.busLog.slice(-199), m] })),
   setBusLog: (busLog) => set({ busLog }),
+
+  // Uma função em loop pode disparar muito evento; o log é limitado.
+  pushWatch: (e) => set((s) => ({ watchLog: [...s.watchLog.slice(-499), e] })),
+  clearWatchLog: () => set({ watchLog: [] }),
 
   openFile: (f) =>
     set((s) => {

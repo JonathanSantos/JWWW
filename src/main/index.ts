@@ -5,6 +5,7 @@ import type { NetRule, OverrideEntry, UserScript, Workspace } from '@shared/sche
 import { ListStore } from './store'
 import { OverrideEngine } from './overrides'
 import { buildUserScriptBundle } from './userscripts'
+import { WATCH_RUNTIME } from './watch'
 import { TabDebugger } from './cdp'
 import { TabManager } from './tabs'
 import { registerIpc } from './ipc'
@@ -27,8 +28,19 @@ function createWindow() {
   const rulesStore = new ListStore<NetRule>('netrules', NetRuleSchema)
   const workspacesStore = new ListStore<Workspace>('workspaces', WorkspaceSchema)
   const engine = new OverrideEngine(() => overridesStore.all())
-  let bundle = buildUserScriptBundle(scriptsStore.all())
   let disableCsp = false
+
+  /**
+   * Tudo que é injetado antes dos scripts da página: o runtime de observação
+   * (só quando há algum watch ativo) e os userscripts.
+   */
+  const buildInjection = (): string | null => {
+    const precisaWatch = overridesStore.all().some((o) => o.enabled && o.kind === 'watch')
+    const partes = [precisaWatch ? WATCH_RUNTIME : null, buildUserScriptBundle(scriptsStore.all())]
+    const juntas = partes.filter(Boolean).join('\n')
+    return juntas.length > 0 ? juntas : null
+  }
+  let bundle = buildInjection()
 
   win = new BrowserWindow({
     width: 1480,
@@ -70,7 +82,7 @@ function createWindow() {
   tabManager = new TabManager(win, makeDebugger)
 
   const refreshScripts = () => {
-    bundle = buildUserScriptBundle(scriptsStore.all())
+    bundle = buildInjection()
     for (const t of tabManager!.allTabs()) t.dbg.refreshUserScripts()
   }
 

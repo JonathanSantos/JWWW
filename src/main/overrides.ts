@@ -1,9 +1,10 @@
 import { createHash } from 'crypto'
 import { diff_match_patch } from 'diff-match-patch'
-import * as acorn from 'acorn'
 import type { OverrideEntry } from '@shared/schemas'
 import type { OverrideStatus } from '@shared/types'
 import { overrideMatches } from '@shared/glob'
+import { declaredNames, describeRange, isExpressionSnippet, parses } from '@shared/analyze'
+import { applyWatch } from './watch'
 
 const dmp = new diff_match_patch()
 dmp.Match_Threshold = 0.4
@@ -32,65 +33,10 @@ function fileLabel(url: string): string {
 export type ApplyResult = {
   overrideId: string
   url: string
-  kind: 'edit' | 'expose'
+  kind: 'edit' | 'expose' | 'watch'
   status: OverrideStatus
   message?: string
   label?: string
-}
-
-const PARSE_OPTS: acorn.Options = {
-  ecmaVersion: 'latest',
-  allowAwaitOutsideFunction: true,
-  allowReturnOutsideFunction: true
-}
-
-function parsesAsFile(text: string): boolean {
-  try {
-    acorn.parse(text, { ...PARSE_OPTS, sourceType: 'script' })
-    return true
-  } catch {
-    try {
-      acorn.parse(text, { ...PARSE_OPTS, sourceType: 'module' })
-      return true
-    } catch {
-      return false
-    }
-  }
-}
-
-function isExpression(sel: string): boolean {
-  try {
-    const prog = acorn.parse(`(${sel}\n)`, PARSE_OPTS) as unknown as { body: Array<{ type: string }> }
-    return prog.body.length === 1 && prog.body[0].type === 'ExpressionStatement'
-  } catch {
-    return false
-  }
-}
-
-function declarationNames(sel: string): string[] {
-  let prog: any
-  try {
-    prog = acorn.parse(sel, { ...PARSE_OPTS, sourceType: 'script' })
-  } catch {
-    try {
-      prog = acorn.parse(sel, { ...PARSE_OPTS, sourceType: 'module' })
-    } catch {
-      return []
-    }
-  }
-  if (!prog?.body || prog.body.length !== 1) return []
-  const node = prog.body[0]
-  if ((node.type === 'FunctionDeclaration' || node.type === 'ClassDeclaration') && node.id?.name) {
-    return [node.id.name]
-  }
-  if (node.type === 'VariableDeclaration') {
-    const names: string[] = []
-    for (const d of node.declarations) {
-      if (d.id?.type === 'Identifier') names.push(d.id.name)
-    }
-    return names
-  }
-  return []
 }
 
 /**
@@ -144,11 +90,18 @@ function applyExpose(
   const nameLit = JSON.stringify(name)
   let transformed: string | null = null
 
-  if (isExpression(selection)) {
+  // O AST do arquivo inteiro sabe o que a seleção é *no contexto dela*, o que a
+  // análise do trecho isolado erra (`{a:1}` sozinho parece um bloco). Quando o
+  // arquivo não parseia, cai na análise do trecho.
+  const info = describeRange(body, pos, pos + selection.length)
+  const ehExpressao =
+    info !== null ? info.kind === 'expression' || info.kind === 'function' : isExpressionSnippet(selection)
+
+  if (ehExpressao) {
     const replacement = `(globalThis[${nameLit}] = (${selection}\n))`
     transformed = body.slice(0, pos) + replacement + body.slice(pos + selection.length)
   } else {
-    const names = declarationNames(selection)
+    const names = declaredNames(selection)
     if (names.length > 0) {
       const value = names.length === 1 ? names[0] : `{ ${names.join(', ')} }`
       const injection = `\n;try { globalThis[${nameLit}] = ${value}; } catch (e) {}\n`
@@ -166,7 +119,7 @@ function applyExpose(
   }
 
   // Se o arquivo original parseava e o transformado não, a transformação quebraria o site: reverte.
-  if (parsesAsFile(body) && !parsesAsFile(transformed)) {
+  if (parses(body) && !parses(transformed)) {
     return {
       text: body,
       status: 'failed',
@@ -234,6 +187,20 @@ export class OverrideEngine {
         status: r.status,
         message: r.message,
         label: `globalThis.${o.expose.name}`
+      })
+    }
+
+    for (const o of entries.filter((e) => e.kind === 'watch')) {
+      if (!o.watch) continue
+      const r = applyWatch(text, o.watch)
+      text = r.text
+      results.push({
+        overrideId: o.id,
+        url,
+        kind: 'watch',
+        status: r.status,
+        message: r.message,
+        label: `observando ${o.watch.label}`
       })
     }
 

@@ -7,6 +7,7 @@ import { ScriptsPanel } from './ScriptsPanel'
 import { OverridesPanel } from './OverridesPanel'
 import { BusPanel } from './BusPanel'
 import { WorkspacesPanel } from './WorkspacesPanel'
+import { WatchPanel } from './WatchPanel'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 
 const PANELS = [
@@ -15,6 +16,7 @@ const PANELS = [
   { value: 'editor', label: 'Editor', Component: EditorPanel },
   { value: 'scripts', label: 'Scripts', Component: ScriptsPanel },
   { value: 'overrides', label: 'Overrides', Component: OverridesPanel },
+  { value: 'watch', label: 'Observar', Component: WatchPanel },
   { value: 'bus', label: 'Bus', Component: BusPanel },
   { value: 'workspaces', label: 'Sessões', Component: WorkspacesPanel }
 ]

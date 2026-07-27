@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import Editor, { type OnMount } from '@monaco-editor/react'
-import { Braces, GitCompare, Globe2, RotateCw, Save, Trash2, X } from 'lucide-react'
+import { Braces, Eye, GitCompare, Globe2, RotateCw, Save, Trash2, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -13,6 +13,7 @@ import {
   DialogTitle
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
+import { Switch } from '@/components/ui/switch'
 import { cn } from '@/lib/utils'
 import { useApp, type EditorFile } from '@/store/app'
 import { monaco } from '@/lib/monaco-setup'
@@ -21,11 +22,43 @@ import { contentTypeFromLanguage, fileLabel, hostOf } from '@/lib/lang'
 import { applyPrettyEdits, canPrettify, makeAnchor, mapRange } from '@/lib/prettify'
 import { DiffView, type DiffMode } from './DiffView'
 import { overrideMatches, suggestPattern } from '@shared/glob'
+import { describeForHumans, describeRange } from '@shared/analyze'
 import type { OverrideEntry } from '@shared/schemas'
 
 const GLOBAL_NAME_RE = /^[A-Za-z_$][A-Za-z0-9_$]*$/
 
 type PendingExpose = { selection: string; prefix: string; suffix: string }
+type PendingWatch = PendingExpose & { descricao: string; sugestao: string }
+
+/**
+ * Traduz a seleção do editor para o espaço do arquivo original (quando a visão
+ * formatada está ligada) e devolve a âncora textual com contexto.
+ */
+function ancoraDaSelecao(
+  file: EditorFile,
+  model: import('monaco-editor').editor.ITextModel,
+  sel: import('monaco-editor').Selection
+): { selection: string; prefix: string; suffix: string; base: string; start: number; end: number } | null {
+  let start = model.getOffsetAt(sel.getStartPosition())
+  let end = model.getOffsetAt(sel.getEndPosition())
+  let full = model.getValue()
+
+  if (file.pretty) {
+    const mapped = mapRange(file.pretty.anchor, start, end)
+    if (!mapped) return null
+    ;[start, end] = mapped
+    full = file.pretty.anchor.base
+  }
+
+  return {
+    selection: full.slice(start, end),
+    prefix: full.slice(Math.max(0, start - 80), start),
+    suffix: full.slice(end, end + 80),
+    base: full,
+    start,
+    end
+  }
+}
 
 export function EditorPanel() {
   const files = useApp((s) => s.files)
@@ -40,8 +73,16 @@ export function EditorPanel() {
   const commitFileText = useApp((s) => s.commitFileText)
 
   const file = files.find((f) => f.url === activeFileUrl)
-  const fileRef = useRef<EditorFile | undefined>(file)
-  fileRef.current = file
+
+  /**
+   * Fonte da verdade para as ações: uma ref atualizada no render pode estar
+   * atrasada em relação ao que o Monaco acabou de escrever no store, e aí
+   * salvar gravaria o texto anterior à última digitação.
+   */
+  const currentFile = (): EditorFile | undefined => {
+    const s = useApp.getState()
+    return s.files.find((f) => f.url === s.activeFileUrl)
+  }
   // Sem mapeamento confiável, formatar vira só leitura: editar aqui produziria
   // um override que não dá para reaplicar sobre o arquivo do servidor.
   const readOnly = Boolean(file?.pretty && !file.pretty.anchor.map)
@@ -52,6 +93,10 @@ export function EditorPanel() {
   const [exposeName, setExposeName] = useState('')
   const [pendingExpose, setPendingExpose] = useState<PendingExpose | null>(null)
   const [diffMode, setDiffMode] = useState<DiffMode | null>(null)
+  const [watchOpen, setWatchOpen] = useState(false)
+  const [watchLabel, setWatchLabel] = useState('')
+  const [watchStack, setWatchStack] = useState(false)
+  const [pendingWatch, setPendingWatch] = useState<PendingWatch | null>(null)
 
   const editOverride = file
     ? overrides.find((o) => o.kind === 'edit' && overrideMatches(o, file.url))
@@ -76,7 +121,7 @@ export function EditorPanel() {
   }
 
   async function save() {
-    const f = fileRef.current
+    const f = currentFile()
     if (!f) return
     const text = resolveText(f)
     if (text === null) {
@@ -126,7 +171,7 @@ export function EditorPanel() {
   saveRef.current = save
 
   function togglePretty() {
-    const f = fileRef.current
+    const f = currentFile()
     if (!f) return
     if (f.pretty) {
       const text = resolveText(f)
@@ -149,7 +194,7 @@ export function EditorPanel() {
 
   function openExposeDialog() {
     const ed = editorRef.current
-    const f = fileRef.current
+    const f = currentFile()
     if (!ed || !f) return
     const model = ed.getModel()
     const sel = ed.getSelection()
@@ -164,41 +209,110 @@ export function EditorPanel() {
       return
     }
 
-    let start = model.getOffsetAt(sel.getStartPosition())
-    let end = model.getOffsetAt(sel.getEndPosition())
-    let full = model.getValue()
-
     // A âncora precisa casar com o arquivo que o servidor entrega, não com a
     // versão formatada: traduz a seleção de volta para o espaço original.
-    if (f.pretty) {
-      const mapped = mapRange(f.pretty.anchor, start, end)
-      if (!mapped) {
-        toast.error('Não é possível expor a partir da visão formatada neste arquivo', {
-          description: 'Desligue a formatação e selecione o trecho novamente.'
-        })
-        return
-      }
-      ;[start, end] = mapped
-      full = f.pretty.anchor.base
+    const ancora = ancoraDaSelecao(f, model, sel)
+    if (!ancora) {
+      toast.error('Não é possível expor a partir da visão formatada neste arquivo', {
+        description: 'Desligue a formatação e selecione o trecho novamente.'
+      })
+      return
     }
-
-    const selection = full.slice(start, end)
-    if (!selection.trim()) {
+    if (!ancora.selection.trim()) {
       toast.info('Seleção vazia após o mapeamento — selecione o trecho de código em si.')
       return
     }
 
     setPendingExpose({
-      selection,
-      prefix: full.slice(Math.max(0, start - 80), start),
-      suffix: full.slice(end, end + 80)
+      selection: ancora.selection,
+      prefix: ancora.prefix,
+      suffix: ancora.suffix
     })
     setExposeName('')
     setExposeOpen(true)
   }
 
+  function openWatchDialog() {
+    const ed = editorRef.current
+    const f = currentFile()
+    if (!ed || !f) return
+    const model = ed.getModel()
+    const sel = ed.getSelection()
+    if (!model || !sel || sel.isEmpty()) {
+      toast.info('Selecione a função ou expressão que você quer observar.')
+      return
+    }
+    if (f.dirty) {
+      toast.warning('Salve o override antes de observar', {
+        description: 'A âncora é gravada sobre o texto salvo — salve (⌘S) e tente de novo.'
+      })
+      return
+    }
+
+    const ancora = ancoraDaSelecao(f, model, sel)
+    if (!ancora || !ancora.selection.trim()) {
+      toast.error('Não foi possível mapear a seleção', {
+        description: 'Desligue a formatação e selecione o trecho novamente.'
+      })
+      return
+    }
+
+    // O AST diz o que a seleção é no contexto do arquivo — é isso que decide se
+    // dá para instrumentar e qual rótulo faz sentido oferecer.
+    const info = describeRange(ancora.base, ancora.start, ancora.end)
+    if (!info || (info.kind !== 'function' && info.kind !== 'expression')) {
+      toast.error('Só dá para observar função ou expressão', {
+        description: info
+          ? `A seleção é ${describeForHumans(info)}.`
+          : 'Não foi possível entender a estrutura deste trecho.'
+      })
+      return
+    }
+
+    setPendingWatch({
+      selection: ancora.selection,
+      prefix: ancora.prefix,
+      suffix: ancora.suffix,
+      descricao: describeForHumans(info),
+      sugestao: info.name ?? (info.kind === 'function' ? 'anônima' : 'expressão')
+    })
+    setWatchLabel(info.name ?? '')
+    setWatchStack(false)
+    setWatchOpen(true)
+  }
+
+  async function confirmWatch() {
+    const f = currentFile()
+    if (!f || !pendingWatch) return
+    const label = watchLabel.trim() || pendingWatch.sugestao
+    const baseText = f.pretty ? f.pretty.anchor.base : f.text
+
+    const entry: OverrideEntry = {
+      id: crypto.randomUUID(),
+      url: f.url,
+      kind: 'watch',
+      enabled: true,
+      contentType: 'js',
+      originalHash: await sha256Hex(baseText),
+      originalText: '',
+      watch: {
+        label,
+        selection: pendingWatch.selection,
+        prefix: pendingWatch.prefix,
+        suffix: pendingWatch.suffix,
+        stack: watchStack
+      },
+      updatedAt: Date.now()
+    }
+    await window.api.overrides.save(entry)
+    setWatchOpen(false)
+    toast.success(`Observando "${label}"`, {
+      description: 'Recarregue a página — cada execução aparece no painel Observar.'
+    })
+  }
+
   async function confirmExpose() {
-    const f = fileRef.current
+    const f = currentFile()
     if (!f || !pendingExpose) return
     const baseText = f.pretty ? f.pretty.anchor.base : f.text
     if (!GLOBAL_NAME_RE.test(exposeName)) {
@@ -375,9 +489,14 @@ export function EditorPanel() {
           </select>
         )}
         {file.language === 'javascript' && (
-          <Button size="sm" variant="secondary" className="h-6 px-2 text-[11px]" onClick={openExposeDialog}>
-            <Globe2 className="mr-1 h-3 w-3" /> Expor global
-          </Button>
+          <>
+            <Button size="sm" variant="secondary" className="h-6 px-2 text-[11px]" onClick={openExposeDialog}>
+              <Globe2 className="mr-1 h-3 w-3" /> Expor global
+            </Button>
+            <Button size="sm" variant="secondary" className="h-6 px-2 text-[11px]" onClick={openWatchDialog}>
+              <Eye className="mr-1 h-3 w-3" /> Observar
+            </Button>
+          </>
         )}
         {editOverride && (
           <Button
@@ -408,7 +527,25 @@ export function EditorPanel() {
       </div>
 
       {/* editor / diff */}
-      <div ref={editorHostRef} className="min-h-0 flex-1 select-text">
+      <div
+        ref={editorHostRef}
+        className="min-h-0 flex-1 select-text"
+        /**
+         * O TabsContent do Radix é focável (tabIndex=0) e fica com o foco do
+         * clique, deixando o textarea escondido do Monaco de fora — resultado:
+         * o cursor aparece mas a digitação não entra. O foco tem que ser
+         * devolvido de forma síncrona: adiar para o próximo tick faz os
+         * primeiros caracteres se perderem.
+         */
+        onMouseDown={(e) => {
+          if (diffMode) return
+          // O padrão do mousedown é focar o ancestral focável — o TabsContent —
+          // logo depois de o Monaco focar o próprio textarea. Cancelamos esse
+          // passo e reafirmamos o foco do editor.
+          e.preventDefault()
+          editorRef.current?.focus()
+        }}
+      >
         {diffMode ? (
           <DiffView
             file={file}
@@ -467,6 +604,42 @@ export function EditorPanel() {
               Cancelar
             </Button>
             <Button onClick={confirmExpose}>Expor</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* dialog de observar execução */}
+      <Dialog open={watchOpen} onOpenChange={setWatchOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Observar execução</DialogTitle>
+            <DialogDescription>
+              Detectei <span className="font-semibold text-sky-400">{pendingWatch?.descricao}</span>. A cada
+              execução, o painel <span className="font-semibold">Observar</span> registra argumentos, retorno e
+              duração. O arquivo servido continua igual ao do servidor, com só este trecho instrumentado.
+            </DialogDescription>
+          </DialogHeader>
+          <pre className="max-h-32 select-text overflow-auto rounded-md bg-secondary/60 p-2 font-mono text-[10px] leading-relaxed">
+            {pendingWatch?.selection}
+          </pre>
+          <Input
+            value={watchLabel}
+            onChange={(e) => setWatchLabel(e.target.value)}
+            placeholder={pendingWatch?.sugestao ?? 'rótulo'}
+            spellCheck={false}
+            className="select-text font-mono"
+            onKeyDown={(e) => e.key === 'Enter' && confirmWatch()}
+            autoFocus
+          />
+          <label className="flex cursor-pointer items-center gap-2 text-xs text-muted-foreground">
+            <Switch checked={watchStack} onCheckedChange={setWatchStack} className="h-4 w-7" />
+            Registrar quem chamou (stack) — mais pesado
+          </label>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setWatchOpen(false)}>
+              Cancelar
+            </Button>
+            <Button onClick={confirmWatch}>Observar</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

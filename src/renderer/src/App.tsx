@@ -32,6 +32,7 @@ export default function App() {
         }
       }),
       window.api.on('bus:message', s.pushBus),
+      window.api.on('watch:event', s.pushWatch),
       window.api.on('overrides:changed', refreshOverrides),
       window.api.on('scripts:changed', refreshScripts),
       window.api.on('rules:changed', refreshRules),

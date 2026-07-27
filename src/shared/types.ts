@@ -29,11 +29,25 @@ export type NetEntry = {
 
 export type OverrideStatus = 'applied' | 'fuzzy' | 'failed'
 
+export type WatchEvent = {
+  label: string
+  kind: 'call' | 'value'
+  tabId: number
+  url: string
+  at: number
+  args?: unknown
+  result?: unknown
+  error?: unknown
+  ms?: number
+  async?: boolean
+  stack?: string | null
+}
+
 export type OverrideStatusEvent = {
   overrideId: string
   url: string
   tabId: number
-  kind: 'edit' | 'expose' | 'sri'
+  kind: 'edit' | 'expose' | 'sri' | 'watch'
   status: OverrideStatus
   message?: string
   label?: string
@@ -105,6 +119,7 @@ export interface JwwwApi {
   on(channel: 'net:clear', cb: (tabId: number) => void): () => void
   on(channel: 'override:status', cb: (ev: OverrideStatusEvent) => void): () => void
   on(channel: 'bus:message', cb: (msg: BusMessage) => void): () => void
+  on(channel: 'watch:event', cb: (ev: WatchEvent) => void): () => void
   on(
     channel: 'overrides:changed' | 'scripts:changed' | 'rules:changed' | 'workspaces:changed',
     cb: () => void

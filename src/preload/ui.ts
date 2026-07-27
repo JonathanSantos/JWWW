@@ -6,6 +6,7 @@ const EVENT_CHANNELS = new Set([
   'net:clear',
   'override:status',
   'bus:message',
+  'watch:event',
   'overrides:changed',
   'scripts:changed',
   'rules:changed',

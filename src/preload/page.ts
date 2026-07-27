@@ -25,6 +25,10 @@ ipcRenderer.on('jwww:bus:message', (_e, msg) => {
 
 contextBridge.exposeInMainWorld('jwww', {
   version: '0.1.0',
+  /** Interno: usado pelo runtime de observação injetado nos arquivos com watch. */
+  _watch(event: unknown) {
+    ipcRenderer.send('jwww:watch', event)
+  },
   bus: {
     emit(topic: string, data?: unknown) {
       if (typeof topic !== 'string' || !topic) throw new Error('jwww.bus.emit(topic, data): topic deve ser string')
