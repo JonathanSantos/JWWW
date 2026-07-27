@@ -7,6 +7,7 @@ import { OverrideEngine } from './overrides'
 import { buildUserScriptBundle } from './userscripts'
 import { WATCH_RUNTIME } from './watch'
 import { MAP_RUNTIME } from './mapping'
+import UI_TOOLKIT from './uikit.js?raw'
 import { TabDebugger } from './cdp'
 import { TabManager } from './tabs'
 import { registerIpc } from './ipc'
@@ -42,6 +43,9 @@ function createWindow() {
     const partes = [
       precisaWatch ? WATCH_RUNTIME : null,
       precisaMap ? MAP_RUNTIME : null,
+      // O toolkit vai sempre: userscript nenhum precisa "ligar" nada, e dá para
+      // montar UI direto do console de qualquer página.
+      UI_TOOLKIT,
       buildUserScriptBundle(scriptsStore.all())
     ]
     const juntas = partes.filter(Boolean).join('\n')

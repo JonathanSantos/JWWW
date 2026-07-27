@@ -1,57 +1,57 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
 /**
- * API injetada em TODAS as páginas: window.jwww
- * O bus atravessa abas e domínios via IPC do Electron — nenhuma restrição
- * de same-origin se aplica, porque a mensagem nunca passa pela web.
+ * Ponte interna com o processo main. É só transporte — a API amigável
+ * (`window.jwww`) é construída pelo toolkit, no mundo da página.
+ *
+ * O motivo é concreto: objetos expostos pelo contextBridge são congelados e a
+ * propriedade fica não-configurável, então nada consegue estender `jwww` depois.
+ * Deixando a montagem para o toolkit, o namespace continua sendo nosso e pode
+ * crescer (ui, estado compartilhado, rpc) sem esbarrar nisso.
  */
-type BusHandler = (msg: { topic: string; data: unknown; from: { tabId: number; origin: string }; at: number }) => void
+type MensagemDoBus = {
+  topic: string
+  data: unknown
+  from: { tabId: number; origin: string }
+  at: number
+}
 
-const listeners = new Map<string, Set<BusHandler>>()
+const ouvintes: Array<(msg: MensagemDoBus) => void> = []
 
-ipcRenderer.on('jwww:bus:message', (_e, msg) => {
-  for (const topic of [msg.topic, '*']) {
-    const set = listeners.get(topic)
-    if (!set) continue
-    for (const fn of set) {
-      try {
-        fn(msg)
-      } catch (err) {
-        console.error('[jwww.bus] handler:', err)
-      }
+ipcRenderer.on('jwww:bus:message', (_e, msg: MensagemDoBus) => {
+  for (const fn of ouvintes.slice()) {
+    try {
+      fn(msg)
+    } catch (err) {
+      console.error('[jwww.bus] ouvinte falhou:', err)
     }
   }
 })
 
-contextBridge.exposeInMainWorld('jwww', {
+contextBridge.exposeInMainWorld('__jwwwBridge', {
   version: '0.1.0',
-  /** Interno: usado pelo runtime de observação injetado nos arquivos com watch. */
-  _watch(event: unknown) {
-    ipcRenderer.send('jwww:watch', event)
+
+  emitBus(topic: string, data: unknown) {
+    if (typeof topic !== 'string' || !topic) throw new Error('topic deve ser uma string não vazia')
+    ipcRenderer.send('jwww:bus:emit', { topic, data })
   },
-  /** Interno: lotes agregados do mapa de execução. */
-  _map(event: unknown) {
-    ipcRenderer.send('jwww:map', event)
-  },
-  bus: {
-    emit(topic: string, data?: unknown) {
-      if (typeof topic !== 'string' || !topic) throw new Error('jwww.bus.emit(topic, data): topic deve ser string')
-      ipcRenderer.send('jwww:bus:emit', { topic, data })
-    },
-    /** on(topic, cb) — use topic '*' para ouvir tudo. Retorna unsubscribe. */
-    on(topic: string, cb: BusHandler) {
-      if (typeof topic !== 'string' || typeof cb !== 'function') {
-        throw new Error('jwww.bus.on(topic, cb)')
-      }
-      let set = listeners.get(topic)
-      if (!set) {
-        set = new Set()
-        listeners.set(topic, set)
-      }
-      set.add(cb)
-      return () => {
-        set!.delete(cb)
-      }
+
+  onBus(cb: (msg: MensagemDoBus) => void) {
+    if (typeof cb !== 'function') throw new Error('onBus(cb): cb deve ser função')
+    ouvintes.push(cb)
+    return () => {
+      const i = ouvintes.indexOf(cb)
+      if (i !== -1) ouvintes.splice(i, 1)
     }
+  },
+
+  /** runtime de observação */
+  watch(evento: unknown) {
+    ipcRenderer.send('jwww:watch', evento)
+  },
+
+  /** lotes do mapa de execução */
+  map(evento: unknown) {
+    ipcRenderer.send('jwww:map', evento)
   }
 })

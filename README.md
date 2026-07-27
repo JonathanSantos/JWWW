@@ -139,6 +139,56 @@ Isso também melhorou o `Expor global`: antes ele classificava o trecho isolado
 (onde `{a: 1}` parece um bloco); agora usa a árvore do arquivo inteiro, que sabe
 o que o trecho é no contexto dele.
 
+### Toolkit de UI: um framework dentro do navegador
+
+`jwww.ui` está disponível em toda página. Monta painel em **shadow DOM**, então o
+CSS do site não vaza para dentro nem o seu vaza para fora. Um painel lateral com
+botão flutuante é uma linha:
+
+```js
+const p = jwww.ui.sidebar({ id: 'meu', titulo: 'Meu painel', botao: '🛠' })
+const n = jwww.ui.estado(0)
+
+p.render(({ html }) => html`
+  <p>Cliques: ${n.get()}</p>
+  <button onclick=${() => n.mude((v) => v + 1)}>Somar</button>
+`)
+```
+
+`render` re-executa sozinho quando um estado lido dentro dele muda — o
+rastreamento de dependência é automático. `html` escapa interpolação por padrão
+(dado do site não vira HTML), e função em atributo de evento vira listener de
+verdade, sem `eval`. O painel guarda aberto/fechado por site.
+
+Também tem `jwww.ui.painel()` (cartão flutuante) e `jwww.ui.limpar()`.
+
+### O que só dá para fazer aqui
+
+O toolkit existe para compor com o resto do JWWW:
+
+```js
+// 1) valor arrancado do bundle do site com "Expor global"
+const carrinho = await jwww.globals.get('carrinho')
+
+// 2) replicado para todas as abas, inclusive de outros domínios
+const compartilhado = jwww.compartilhado('carrinho', carrinho)
+
+// 3) e o site B pode chamar uma função interna do site A
+jwww.rpc.atender('limparCarrinho', () => carrinho.limpar())
+// da outra aba:  await jwww.rpc.chamar('limparCarrinho')
+```
+
+`jwww.globals.get` espera o valor aparecer — o userscript costuma rodar antes do
+bundle do site executar. `jwww.compartilhado` sincroniza pelo IPC do Electron,
+não pela web, então não há CORS nem same-origin no caminho: uma aba do site A e
+outra do site B veem o mesmo valor.
+
+O RPC é **broadcast, e quem responder primeiro ganha** — se duas abas atendem o
+mesmo método, você recebe a resposta mais rápida. Restrinja pelo padrão de URL
+do userscript quando isso importar.
+
+O painel **Scripts** traz modelos prontos para os quatro fluxos acima.
+
 ### Bus entre abas
 
 Toda página recebe `window.jwww.bus` via preload (contextBridge):
@@ -258,6 +308,10 @@ seus overrides reais intocados e, de quebra, faz o lock de instância única (qu
 - Mapa de execução: zerar os contadores e clicar num botão do site mostrou só as
   funções daquela interação, com a contagem certa do laço; e o código morto
   ficou de fora. O valor calculado pela página continuou o mesmo.
+- Toolkit: painel sobreviveu a um `display:none` que o site declarava para a
+  mesma classe, e nada dele vazou para fora do shadow root. HTML vindo do site
+  virou texto, não elemento. Estado escrito numa aba apareceu em outra, de outra
+  origem; e o RPC devolveu o título de uma aba para a outra.
 - Glob: override criado em `app.a3f9b1.js` continuou valendo em `app.ff0099.js`
   depois de um "deploy" que trocou nome **e** conteúdo do bundle.
 - Diff nos dois modos, com o modo servidor buscando o corpo real do site

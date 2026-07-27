@@ -38,25 +38,41 @@ export class JwwwApp {
    * não uma janela, então não aparece para o Playwright — chegamos nela pelo
    * processo main.
    */
-  async pageEval<T = unknown>(expression: string): Promise<T> {
-    return this.electronApp.evaluate(async ({ webContents }, expr) => {
-      const target = webContents.getAllWebContents().find((wc) => wc.getURL().startsWith('http'))
-      if (!target) throw new Error('nenhuma página navegada encontrada')
-      return target.executeJavaScript(expr, true)
-    }, expression)
+  /**
+   * Roda JS numa página navegada. `filtroUrl` escolhe a aba quando há mais de
+   * uma — é o que permite testar comunicação entre abas de domínios diferentes.
+   */
+  async pageEval<T = unknown>(expression: string, filtroUrl?: string): Promise<T> {
+    return this.electronApp.evaluate(
+      async ({ webContents }, { expr, filtro }) => {
+        const paginas = webContents.getAllWebContents().filter((wc) => wc.getURL().startsWith('http'))
+        const target = filtro ? paginas.find((wc) => wc.getURL().includes(filtro)) : paginas[0]
+        if (!target) throw new Error(`nenhuma página encontrada${filtro ? ` para "${filtro}"` : ''}`)
+        return target.executeJavaScript(expr, true)
+      },
+      { expr: expression, filtro: filtroUrl ?? null }
+    )
+  }
+
+  /** Abre outra aba e espera ela terminar de carregar. */
+  async openTab(url: string): Promise<number> {
+    const id = await this.ui.evaluate((u) => window.api.tabs.create(u), url)
+    await this.waitForPage(30_000, url)
+    return id
   }
 
   /**
    * A aba é criada vazia e navega depois (o attach do CDP acontece antes do
    * loadURL), então esperar só pela janela da UI devolve um teste instável.
    */
-  async waitForPage(timeoutMs = 30_000): Promise<void> {
+  async waitForPage(timeoutMs = 30_000, filtroUrl?: string): Promise<void> {
     const deadline = Date.now() + timeoutMs
     for (;;) {
-      const ready = await this.electronApp.evaluate(({ webContents }) => {
-        const wc = webContents.getAllWebContents().find((c) => c.getURL().startsWith('http'))
+      const ready = await this.electronApp.evaluate(({ webContents }, filtro) => {
+        const paginas = webContents.getAllWebContents().filter((c) => c.getURL().startsWith('http'))
+        const wc = filtro ? paginas.find((c) => c.getURL().includes(filtro)) : paginas[0]
         return Boolean(wc && !wc.isLoading())
-      })
+      }, filtroUrl ?? null)
       if (ready) return
       if (Date.now() > deadline) throw new Error('a página não terminou de carregar a tempo')
       await new Promise((r) => setTimeout(r, 200))

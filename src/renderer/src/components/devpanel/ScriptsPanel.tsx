@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import Editor from '@monaco-editor/react'
-import { Plus, Save, Trash2 } from 'lucide-react'
+import { Plus, Save, Sparkles, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -16,6 +16,98 @@ const TEMPLATE = `// Roda no MUNDO DA PÁGINA, com a origem do site — sem sand
 //   jwww.bus.on('meu-topico', (msg) => console.log(msg.data, msg.from))
 console.log('[JWWW] script ativo em', location.href)
 `
+
+/**
+ * Pontos de partida. O toolkit (`jwww.ui`) está sempre disponível na página,
+ * então é só colar e salvar.
+ */
+const MODELOS: Array<{ nome: string; descricao: string; codigo: string }> = [
+  {
+    nome: 'Painel lateral',
+    descricao: 'Botão flutuante que abre uma sidebar em shadow DOM',
+    codigo: `const painel = jwww.ui.sidebar({
+  id: 'meu-painel',
+  titulo: 'Meu painel',
+  botao: '🛠',          // botão flutuante que abre/fecha
+  lado: 'direita'
+})
+
+const contador = jwww.ui.estado(0)
+
+// re-renderiza sozinho quando um estado lido aqui dentro muda
+painel.render(({ html }) => html\`
+  <h3>Olá, \${location.hostname}</h3>
+  <p>Cliques: \${contador.get()}</p>
+  <button onclick=\${() => contador.mude((n) => n + 1)}>Somar</button>
+\`)`
+  },
+  {
+    nome: 'Espelhar valor do site',
+    descricao: 'Lê um valor exposto do bundle e mostra no painel',
+    codigo: `// 1) No Editor, selecione o trecho do JS do site e use "Expor global"
+//    dando o nome \`estadoDoApp\`.
+// 2) Este script espera o valor aparecer e o mostra ao vivo.
+
+const painel = jwww.ui.painel({ id: 'espelho', titulo: 'Estado do app' })
+const valor = jwww.ui.estado(null)
+
+jwww.globals
+  .get('estadoDoApp')
+  .then((v) => valor.set(v))
+  .catch((e) => valor.set({ erro: String(e) }))
+
+painel.render(({ html }) => html\`
+  <pre>\${JSON.stringify(valor.get(), null, 2) ?? 'esperando…'}</pre>
+\`)`
+  },
+  {
+    nome: 'Painel entre abas',
+    descricao: 'Estado compartilhado entre abas de domínios diferentes',
+    codigo: `// Rode este mesmo script em abas de sites diferentes: o valor é o mesmo
+// nas duas, porque trafega pelo IPC do JWWW e não pela web.
+
+const notas = jwww.compartilhado('notas', [])
+const painel = jwww.ui.sidebar({ id: 'notas', titulo: 'Notas (todas as abas)', botao: '📝' })
+
+painel.render(({ html }) => html\`
+  <input id="nova" placeholder="escreva e tecle Enter"
+    onkeydown=\${(e) => {
+      if (e.key !== 'Enter' || !e.target.value.trim()) return
+      notas.mude((lista) => [...lista, { texto: e.target.value, de: location.hostname }])
+      e.target.value = ''
+    }} />
+  <ul>
+    \${notas.get().map((n) => html\`<li>\${n.texto} <small>— \${n.de}</small></li>\`)}
+  </ul>
+\`)`
+  },
+  {
+    nome: 'Controlar outra aba',
+    descricao: 'Uma aba atende, outra chama — mesmo em domínio diferente',
+    codigo: `// Nesta aba: publica uma capacidade que outras abas podem chamar.
+jwww.rpc.atender('titulo', () => document.title)
+jwww.rpc.atender('buscar', (seletor) => {
+  const el = document.querySelector(seletor)
+  return el ? el.textContent.trim() : null
+})
+
+// De QUALQUER outra aba (inclusive outro domínio):
+//   await jwww.rpc.chamar('titulo')
+//   await jwww.rpc.chamar('buscar', 'h1')
+
+const painel = jwww.ui.painel({ id: 'rpc', titulo: 'Controle remoto' })
+const saida = jwww.ui.estado('—')
+
+painel.render(({ html }) => html\`
+  <p>Título de outra aba:</p>
+  <pre>\${saida.get()}</pre>
+  <button onclick=\${async () => {
+    try { saida.set(await jwww.rpc.chamar('titulo')) }
+    catch (e) { saida.set(String(e.message)) }
+  }}>Perguntar</button>
+\`)`
+  }
+]
 
 export function ScriptsPanel() {
   const scripts = useApp((s) => s.scripts)
@@ -35,6 +127,14 @@ export function ScriptsPanel() {
       setCode(selected.code)
     }
   }, [selectedId])
+
+  function usarModelo(modelo: (typeof MODELOS)[number]) {
+    setSelectedId(null)
+    setName(modelo.nome)
+    setMatches('*')
+    setRunAt('document-end')
+    setCode(modelo.codigo)
+  }
 
   function newScript() {
     setSelectedId(null)
@@ -112,12 +212,30 @@ export function ScriptsPanel() {
             rodam com a mesma origem do site, então podem chamar as APIs internas dele sem CORS.
           </p>
           <p>
-            Use <code className="font-mono text-violet-400">window.jwww.bus</code> para conversar entre abas de
-            domínios diferentes.
+            O toolkit <code className="font-mono text-violet-400">jwww.ui</code> monta painéis em shadow DOM, e{' '}
+            <code className="font-mono text-violet-400">jwww.compartilhado</code> /{' '}
+            <code className="font-mono text-violet-400">jwww.rpc</code> ligam abas de domínios diferentes.
           </p>
           <Button size="sm" variant="secondary" onClick={newScript}>
-            <Plus className="mr-1 h-3.5 w-3.5" /> Criar script
+            <Plus className="mr-1 h-3.5 w-3.5" /> Script em branco
           </Button>
+          <div className="mt-2 w-full max-w-sm space-y-1">
+            <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70">
+              ou comece por um modelo
+            </div>
+            {MODELOS.map((m) => (
+              <button
+                key={m.nome}
+                onClick={() => usarModelo(m)}
+                className="flex w-full flex-col items-start gap-0.5 rounded-md border border-border/60 px-2.5 py-1.5 text-left transition-colors hover:bg-secondary/50"
+              >
+                <span className="flex items-center gap-1.5 text-xs font-medium text-foreground">
+                  <Sparkles className="h-3 w-3 text-violet-400" /> {m.nome}
+                </span>
+                <span className="text-[10px] text-muted-foreground">{m.descricao}</span>
+              </button>
+            ))}
+          </div>
         </div>
       ) : (
         <div className="flex min-w-0 flex-1 flex-col">

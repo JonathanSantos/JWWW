@@ -45,7 +45,7 @@ export const WATCH_RUNTIME = `;(() => {
     try {
       evt.at = Date.now();
       evt.url = location.href;
-      if (globalThis.jwww && globalThis.jwww._watch) globalThis.jwww._watch(evt);
+      if (globalThis.__jwwwBridge) globalThis.__jwwwBridge.watch(evt);
     } catch (e) {}
   }
   function watch(label, fn, opts) {

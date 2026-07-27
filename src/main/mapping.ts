@@ -25,7 +25,7 @@ export const MAP_RUNTIME = `;(() => {
     contadores.forEach(function (v) { lote.push([v.arquivo, v.id, v.c, Math.round(v.t * 100) / 100]) });
     contadores.clear();
     try {
-      if (globalThis.jwww && globalThis.jwww._map) globalThis.jwww._map({ lote: lote });
+      if (globalThis.__jwwwBridge) globalThis.__jwwwBridge.map({ lote: lote });
     } catch (e) {}
   }
 
