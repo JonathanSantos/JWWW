@@ -43,6 +43,38 @@ export type WatchEvent = {
   stack?: string | null
 }
 
+/**
+ * Um valor vindo da página. Espelha o RemoteObject do CDP: primitivos trazem
+ * `value`; objetos vêm por referência (`objectId`) com uma prévia, e só são
+ * expandidos sob demanda — é o que evita serializar um grafo inteiro a cada log.
+ */
+export type RemoteValue = {
+  type: string
+  subtype?: string
+  value?: unknown
+  description?: string
+  objectId?: string
+  className?: string
+  preview?: {
+    overflow: boolean
+    properties: Array<{ name: string; type: string; subtype?: string; value?: string }>
+  }
+}
+
+export type ConsoleLevel = 'log' | 'info' | 'warn' | 'error' | 'debug' | 'input' | 'result'
+
+export type ConsoleEntry = {
+  id: string
+  tabId: number
+  level: ConsoleLevel
+  args: RemoteValue[]
+  at: number
+  /** origem no código da página, quando o CDP informa */
+  origem?: string
+  /** pilha formatada, para erros */
+  stack?: string
+}
+
 /** Uma função instrumentada pelo mapa de execução. */
 export type MapFunction = {
   id: number
@@ -151,6 +183,19 @@ export interface JwwwApi {
     exportToFile(id: string): Promise<string | null>
     importFromFile(): Promise<Workspace | null>
   }
+  console: {
+    /** avalia no mundo principal da página, como o console do DevTools */
+    evaluate(
+      tabId: number,
+      expression: string
+    ): Promise<{ ok: boolean; value?: RemoteValue; error?: string }>
+    /** expande um objeto sob demanda */
+    getProperties(
+      tabId: number,
+      objectId: string
+    ): Promise<{ ok: boolean; properties?: Array<{ name: string; value: RemoteValue }>; error?: string }>
+    clear(tabId: number): Promise<void>
+  }
   bus: {
     emit(topic: string, data: unknown): Promise<void>
     history(): Promise<BusMessage[]>
@@ -161,6 +206,8 @@ export interface JwwwApi {
   on(channel: 'override:status', cb: (ev: OverrideStatusEvent) => void): () => void
   on(channel: 'bus:message', cb: (msg: BusMessage) => void): () => void
   on(channel: 'watch:event', cb: (ev: WatchEvent) => void): () => void
+  on(channel: 'console:entries', cb: (entries: ConsoleEntry[]) => void): () => void
+  on(channel: 'console:clear', cb: (tabId: number) => void): () => void
   on(channel: 'map:catalog', cb: (ev: MapCatalogEvent) => void): () => void
   on(channel: 'map:counts', cb: (ev: MapCountsEvent) => void): () => void
   on(

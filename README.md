@@ -236,6 +236,26 @@ Se o mapeamento não for confiável para algum arquivo, a formatação vira some
 leitura em vez de gerar um override que não daria para reaplicar.
 `npm test` cobre esse mapeamento.
 
+### Console da página
+
+Painel **Console**, construído sobre o domínio `Runtime` do CDP — o mesmo
+caminho que o console do DevTools usa. Isso importa: captura erros nativos e
+não capturados, não só o que passa por `console.*`, e não precisa injetar nada
+na página.
+
+- Objetos chegam **por referência, com prévia**, e expandem sob demanda. Nada de
+  `JSON.stringify` achatado — você navega o objeto de verdade.
+- As diretivas de formatação valem (`%c`, `%s`, `%d`, `%o`, `%%`), inclusive o
+  CSS do `%c` — de um subconjunto seguro, já que o estilo vem do site.
+- Erros não capturados e promessas rejeitadas viram entradas de erro com pilha.
+- O prompt avalia no **mundo principal** da página, com a API de linha de
+  comando (`$0`, `$_`). Enter avalia, ⇧Enter quebra linha, ↑/↓ navegam o
+  histórico.
+- O log zera ao navegar, e sai junto quando a aba fecha.
+
+Avisos do próprio Electron são filtrados: eles apareceriam em toda página e não
+têm nada a ver com o site.
+
 ### Overrides por padrão (glob)
 
 Um override casa por URL exata por padrão. Bundles modernos trazem o hash do

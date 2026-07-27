@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type {
   BusMessage,
+  ConsoleEntry,
   MapCatalogEvent,
   MapCountsEvent,
   NetEntry,
@@ -47,6 +48,8 @@ type AppState = {
   workspaces: Workspace[]
   statuses: OverrideStatusEvent[]
   busLog: BusMessage[]
+  /** console da página, por aba */
+  consoleLog: Record<number, ConsoleEntry[]>
   watchLog: WatchEvent[]
   /** catálogo de funções instrumentadas, por fileId (uma instrumentação) */
   mapCatalogs: Record<string, MapCatalogEvent>
@@ -70,6 +73,10 @@ type AppState = {
   pushStatus: (ev: OverrideStatusEvent) => void
   pushBus: (m: BusMessage) => void
   setBusLog: (m: BusMessage[]) => void
+  addConsoleEntries: (entries: ConsoleEntry[]) => void
+  /** entradas criadas na própria UI (o que você digitou e o resultado) */
+  pushConsoleLocal: (tabId: number, entry: ConsoleEntry) => void
+  clearConsoleLog: (tabId: number) => void
   pushWatch: (e: WatchEvent) => void
   clearWatchLog: () => void
   setMapCatalog: (ev: MapCatalogEvent) => void
@@ -98,6 +105,7 @@ export const useApp = create<AppState>((set) => ({
   workspaces: [],
   statuses: [],
   busLog: [],
+  consoleLog: {},
   watchLog: [],
   mapCatalogs: {},
   mapCounts: {},
@@ -112,12 +120,17 @@ export const useApp = create<AppState>((set) => ({
   setTabs: (tabs) =>
     set((s) => {
       const vivas = new Set(tabs.map((t) => t.id))
-      const sobrou = Object.keys(s.net).some((id) => !vivas.has(Number(id)))
+      const sobrou =
+        Object.keys(s.net).some((id) => !vivas.has(Number(id))) ||
+        Object.keys(s.consoleLog).some((id) => !vivas.has(Number(id)))
       const catalogosMortos = Object.entries(s.mapCatalogs).filter(([, c]) => !vivas.has(c.tabId))
       if (!sobrou && catalogosMortos.length === 0) return { tabs }
 
       const net = Object.fromEntries(
         Object.entries(s.net).filter(([id]) => vivas.has(Number(id)))
+      )
+      const consoleLog = Object.fromEntries(
+        Object.entries(s.consoleLog).filter(([id]) => vivas.has(Number(id)))
       )
       const mapCatalogs = Object.fromEntries(
         Object.entries(s.mapCatalogs).filter(([, c]) => vivas.has(c.tabId))
@@ -125,7 +138,7 @@ export const useApp = create<AppState>((set) => ({
       const mapCounts = Object.fromEntries(
         Object.entries(s.mapCounts).filter(([fileId]) => mapCatalogs[fileId] !== undefined)
       )
-      return { tabs, net, mapCatalogs, mapCounts }
+      return { tabs, net, consoleLog, mapCatalogs, mapCounts }
     }),
 
   upsertNet: (entries) =>
@@ -161,6 +174,23 @@ export const useApp = create<AppState>((set) => ({
 
   pushBus: (m) => set((s) => ({ busLog: [...s.busLog.slice(-199), m] })),
   setBusLog: (busLog) => set({ busLog }),
+
+  addConsoleEntries: (entries) =>
+    set((s) => {
+      const consoleLog = { ...s.consoleLog }
+      for (const e of entries) {
+        // uma página pode logar aos milhares: o histórico é limitado
+        consoleLog[e.tabId] = [...(consoleLog[e.tabId] ?? []).slice(-999), e]
+      }
+      return { consoleLog }
+    }),
+
+  pushConsoleLocal: (tabId, entry) =>
+    set((s) => ({
+      consoleLog: { ...s.consoleLog, [tabId]: [...(s.consoleLog[tabId] ?? []).slice(-999), entry] }
+    })),
+
+  clearConsoleLog: (tabId) => set((s) => ({ consoleLog: { ...s.consoleLog, [tabId]: [] } })),
 
   // Uma função em loop pode disparar muito evento; o log é limitado.
   pushWatch: (e) => set((s) => ({ watchLog: [...s.watchLog.slice(-499), e] })),

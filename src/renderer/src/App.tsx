@@ -37,6 +37,8 @@ export default function App() {
       }),
       window.api.on('bus:message', s.pushBus),
       window.api.on('watch:event', s.pushWatch),
+      window.api.on('console:entries', s.addConsoleEntries),
+      window.api.on('console:clear', s.clearConsoleLog),
       window.api.on('map:catalog', s.setMapCatalog),
       window.api.on('map:counts', s.addMapCounts),
       window.api.on('overrides:changed', refreshOverrides),

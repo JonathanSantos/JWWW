@@ -9,10 +9,12 @@ import { BusPanel } from './BusPanel'
 import { WorkspacesPanel } from './WorkspacesPanel'
 import { WatchPanel } from './WatchPanel'
 import { MapPanel } from './MapPanel'
+import { ConsolePanel } from './ConsolePanel'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 
 const PANELS = [
   { value: 'resources', label: 'Recursos', Component: ResourcesPanel },
+  { value: 'console', label: 'Console', Component: ConsolePanel },
   { value: 'network', label: 'Rede', Component: NetworkPanel },
   { value: 'editor', label: 'Editor', Component: EditorPanel },
   { value: 'scripts', label: 'Scripts', Component: ScriptsPanel },

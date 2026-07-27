@@ -129,6 +129,27 @@ export function registerIpc(ctx: IpcContext) {
     await ctx.tabs.get(tabId)?.dbg.setThrottle(preset as ThrottlePreset)
   })
 
+  // --- console da página ---
+  handleUi('console:evaluate', async (payload: unknown) => {
+    const { tabId, expression } = z
+      .object({ tabId: z.number(), expression: z.string().max(100_000) })
+      .parse(payload)
+    const tab = ctx.tabs.get(tabId)
+    if (!tab?.dbg.attached) return { ok: false as const, error: 'aba sem depurador anexado' }
+    return tab.dbg.evaluate(expression)
+  })
+
+  handleUi('console:getProperties', async (payload: unknown) => {
+    const { tabId, objectId } = z.object({ tabId: z.number(), objectId: z.string() }).parse(payload)
+    const tab = ctx.tabs.get(tabId)
+    if (!tab?.dbg.attached) return { ok: false as const, error: 'aba sem depurador anexado' }
+    return tab.dbg.getProperties(objectId)
+  })
+
+  handleUi('console:clear', (tabId: unknown) => {
+    ctx.tabs.get(z.number().parse(tabId))?.dbg.clearConsole()
+  })
+
   // --- regras de rede ---
   handleUi('rules:list', () => ctx.rulesStore.all())
   handleUi('rules:save', (rule: unknown) => {

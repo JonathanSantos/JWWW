@@ -9,6 +9,8 @@ const EVENT_CHANNELS = new Set([
   'watch:event',
   'map:catalog',
   'map:counts',
+  'console:entries',
+  'console:clear',
   'overrides:changed',
   'scripts:changed',
   'rules:changed',
@@ -55,6 +57,13 @@ contextBridge.exposeInMainWorld('api', {
     list: () => invoke('scripts:list'),
     save: (script: unknown) => invoke('scripts:save', script),
     remove: (id: string) => invoke('scripts:remove', id)
+  },
+  console: {
+    evaluate: (tabId: number, expression: string) =>
+      invoke('console:evaluate', { tabId, expression }),
+    getProperties: (tabId: number, objectId: string) =>
+      invoke('console:getProperties', { tabId, objectId }),
+    clear: (tabId: number) => invoke('console:clear', tabId)
   },
   workspaces: {
     list: () => invoke('workspaces:list'),

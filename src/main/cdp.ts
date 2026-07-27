@@ -1,5 +1,12 @@
 import type { WebContents } from 'electron'
-import type { MapCatalogEvent, NetEntry, OverrideStatusEvent, ThrottlePreset } from '@shared/types'
+import type {
+  ConsoleEntry,
+  MapCatalogEvent,
+  NetEntry,
+  OverrideStatusEvent,
+  RemoteValue,
+  ThrottlePreset
+} from '@shared/types'
 import { findSourceMappingURL, resolveSourceMapURL } from '@shared/sourcemap'
 import type { NetRule } from '@shared/schemas'
 import { OverrideEngine, stripHash } from './overrides'
@@ -37,6 +44,66 @@ type Deps = {
   emitNetClear: (tabId: number) => void
   emitOverrideStatus: (ev: OverrideStatusEvent) => void
   emitMapCatalog: (ev: MapCatalogEvent) => void
+  emitConsole: (entries: ConsoleEntry[]) => void
+  emitConsoleClear: (tabId: number) => void
+}
+
+const NIVEIS: Record<string, ConsoleEntry['level']> = {
+  log: 'log',
+  info: 'info',
+  warning: 'warn',
+  error: 'error',
+  debug: 'debug',
+  dir: 'log',
+  table: 'log',
+  trace: 'debug',
+  assert: 'error'
+}
+
+function mapearNivel(tipo: string): ConsoleEntry['level'] {
+  return NIVEIS[tipo] ?? 'log'
+}
+
+/** Converte o RemoteObject do CDP no formato que a UI entende. */
+function toRemoteValue(o: any): RemoteValue {
+  if (!o || typeof o !== 'object') return { type: 'undefined' }
+  const preview = o.preview
+    ? {
+        overflow: Boolean(o.preview.overflow),
+        properties: (o.preview.properties ?? []).map((p: any) => ({
+          name: String(p.name),
+          type: String(p.type),
+          subtype: p.subtype,
+          value: p.value === undefined ? undefined : String(p.value)
+        }))
+      }
+    : undefined
+  return {
+    type: o.type,
+    subtype: o.subtype,
+    value: o.value,
+    description: o.description,
+    objectId: o.objectId,
+    className: o.className,
+    preview
+  }
+}
+
+function quadro(f: any): string {
+  const nome = f.functionName || '(anônima)'
+  return `${nome} — ${f.url || '?'}:${(f.lineNumber ?? 0) + 1}`
+}
+
+function origemDoStack(stack: any): string | undefined {
+  const f = stack?.callFrames?.[0]
+  if (!f?.url) return undefined
+  return `${f.url}:${(f.lineNumber ?? 0) + 1}`
+}
+
+function formatarPilha(stack: any): string | undefined {
+  const quadros = stack?.callFrames
+  if (!Array.isArray(quadros) || quadros.length === 0) return undefined
+  return quadros.slice(0, 8).map(quadro).join('\n')
 }
 
 /** O source map do bundle é resolvido aqui porque só o main tem o corpo cru. */
@@ -51,6 +118,9 @@ export class TabDebugger {
   private dirty = new Set<string>()
   private flushTimer: ReturnType<typeof setTimeout> | null = null
   private scriptIds: string[] = []
+  private consoleFila: ConsoleEntry[] = []
+  private consoleTimer: ReturnType<typeof setTimeout> | null = null
+  private consoleSeq = 0
   attached = false
 
   constructor(
@@ -92,6 +162,9 @@ export class TabDebugger {
     // e os overrides não aplicariam de forma confiável.
     await this.sendSafe('Network.setBypassServiceWorker', { bypass: true })
     await this.sendSafe('Network.setCacheDisabled', { cacheDisabled: true })
+    // Runtime é o que dá console, erros não capturados e avaliação de
+    // expressão — o mesmo caminho que o console do DevTools usa.
+    await this.sendSafe('Runtime.enable')
     await this.sendSafe('Page.enable')
     await this.sendSafe('Fetch.enable', { patterns: INTERCEPT_PATTERNS })
     await this.refreshUserScripts()
@@ -112,6 +185,77 @@ export class TabDebugger {
 
   async setThrottle(preset: ThrottlePreset) {
     await this.sendSafe('Network.emulateNetworkConditions', THROTTLE_PRESETS[preset])
+  }
+
+  /**
+   * Um `console.log` dentro de um laço geraria milhares de mensagens de IPC e
+   * travaria a janela; o lote resolve isso do mesmo jeito que o log de rede.
+   */
+  private pushConsole(entry: ConsoleEntry) {
+    // O próprio Electron loga avisos no renderer da página (CSP, por exemplo).
+    // Isso não veio do site e apareceria em todo lugar: é ruído nosso.
+    if (entry.origem?.startsWith('node:electron')) return
+    this.consoleFila.push(entry)
+    if (this.consoleFila.length > 500) this.consoleFila.splice(0, this.consoleFila.length - 500)
+    if (this.consoleTimer) return
+    this.consoleTimer = setTimeout(() => {
+      this.consoleTimer = null
+      const lote = this.consoleFila.splice(0)
+      if (lote.length) this.deps.emitConsole(lote)
+    }, 100)
+  }
+
+  clearConsole() {
+    this.consoleFila = []
+    this.deps.emitConsoleClear(this.tabId)
+  }
+
+  /** Avalia no mundo principal da página, com a API de linha de comando (`$0`, `$_`). */
+  async evaluate(expression: string): Promise<{ ok: boolean; value?: RemoteValue; error?: string }> {
+    try {
+      const r = await this.send('Runtime.evaluate', {
+        expression,
+        includeCommandLineAPI: true,
+        // replMode deixa redeclarar `let`/`const` entre avaliações
+        replMode: true,
+        returnByValue: false,
+        generatePreview: true,
+        awaitPromise: true,
+        userGesture: true,
+        allowUnsafeEvalBlockedByCSP: true
+      })
+      if (r.exceptionDetails) {
+        const excecao = r.exceptionDetails.exception
+        return {
+          ok: false,
+          error: excecao?.description ?? r.exceptionDetails.text ?? 'erro na avaliação',
+          value: excecao ? toRemoteValue(excecao) : undefined
+        }
+      }
+      return { ok: true, value: toRemoteValue(r.result) }
+    } catch (err) {
+      return { ok: false, error: String((err as Error)?.message ?? err) }
+    }
+  }
+
+  async getProperties(
+    objectId: string
+  ): Promise<{ ok: boolean; properties?: Array<{ name: string; value: RemoteValue }>; error?: string }> {
+    try {
+      const r = await this.send('Runtime.getProperties', {
+        objectId,
+        ownProperties: true,
+        accessorPropertiesOnly: false,
+        generatePreview: true
+      })
+      const properties = (r.result ?? [])
+        .filter((p: any) => p.value !== undefined)
+        .map((p: any) => ({ name: String(p.name), value: toRemoteValue(p.value) }))
+      return { ok: true, properties }
+    } catch (err) {
+      // objectId morre quando a página navega — a mensagem precisa dizer isso
+      return { ok: false, error: 'o objeto não existe mais (a página recarregou?)' }
+    }
   }
 
   async getBody(requestId: string): Promise<string> {
@@ -196,6 +340,33 @@ export class TabDebugger {
         })
         break
       }
+      case 'Runtime.consoleAPICalled':
+        this.pushConsole({
+          id: `c${++this.consoleSeq}`,
+          tabId: this.tabId,
+          level: mapearNivel(params.type),
+          args: (params.args ?? []).map(toRemoteValue),
+          at: Date.now(),
+          origem: origemDoStack(params.stackTrace)
+        })
+        break
+      case 'Runtime.exceptionThrown': {
+        const d = params.exceptionDetails ?? {}
+        const objeto = d.exception ? toRemoteValue(d.exception) : undefined
+        this.pushConsole({
+          id: `c${++this.consoleSeq}`,
+          tabId: this.tabId,
+          level: 'error',
+          args: [objeto ?? { type: 'string', value: d.text ?? 'erro desconhecido' }],
+          at: Date.now(),
+          origem: origemDoStack(d.stackTrace) ?? (d.url ? `${d.url}:${(d.lineNumber ?? 0) + 1}` : undefined),
+          stack: formatarPilha(d.stackTrace)
+        })
+        break
+      }
+      case 'Runtime.executionContextsCleared':
+        this.clearConsole()
+        break
       case 'Fetch.requestPaused':
         this.handlePaused(params).catch((err) => {
           console.warn('[cdp] requestPaused:', err?.message ?? err)

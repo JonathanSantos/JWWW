@@ -88,7 +88,9 @@ function createWindow() {
       emitNet: (_tabId, entries) => uiSend('net:upsert', entries),
       emitNetClear: (tabId) => uiSend('net:clear', tabId),
       emitOverrideStatus: (ev) => uiSend('override:status', ev),
-      emitMapCatalog: (ev) => uiSend('map:catalog', ev)
+      emitMapCatalog: (ev) => uiSend('map:catalog', ev),
+      emitConsole: (entries) => uiSend('console:entries', entries),
+      emitConsoleClear: (tabId) => uiSend('console:clear', tabId)
     })
 
   tabManager = new TabManager(win, makeDebugger)
