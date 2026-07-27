@@ -72,6 +72,29 @@ O trecho é reconhecido por AST, então o diálogo já diz o que você seleciono
 (`função async buscarNome(id)`), sugere o nome como rótulo e recusa o que não dá
 para instrumentar com segurança.
 
+### Source maps: ler o fonte original
+
+Ao abrir um JS que publica `//# sourceMappingURL=`, aparece um seletor de
+arquivo de origem na toolbar. Escolhendo um, o editor mostra o **TypeScript (ou
+JSX) original** em vez do bundle minificado — com os tipos, os nomes de verdade
+e os comentários que sumiram no build.
+
+O ponto importante: **Expor global e Observar funcionam a partir do fonte**. A
+seleção é traduzida pelo source map para a posição correspondente no bundle, o
+AST expande até o nó inteiro, e o override é ancorado **no bundle** — que é o
+arquivo que o servidor entrega. Você lê e escolhe no código que escreveu;
+o JWWW instrumenta o código que roda.
+
+Se o ponto selecionado não existe no bundle (tipos, `interface`, ramos removidos
+pelo build), o JWWW avisa em vez de adivinhar. Ele não procura um ponto mapeado
+nas linhas seguintes de propósito: selecionar um tipo e acabar instrumentando a
+função de baixo seria pior do que dizer que ali não há correspondência.
+
+**A visão do fonte é somente leitura, e isso é honesto.** Aplicar uma edição do
+TypeScript de volta no bundle exigiria rodar o build do site — tsconfig,
+plugins, minificador —, que não temos. Editar continua sendo no bundle, com o
+`Formatar` para deixá-lo legível.
+
 ### AST: entender e localizar, nunca gerar
 
 `src/shared/analyze.ts` faz o parse com acorn e devolve **offsets**. É uma regra
@@ -198,6 +221,9 @@ seus overrides reais intocados e, de quebra, faz o lock de instância única (qu
 - Árvore de recursos com pastas aninhadas e colapso de pasta única (`js/vendor`).
 - Observar: função instrumentada registra cada chamada com argumentos e retorno,
   sem alterar o valor que chega a quem chamou nem engolir exceções.
+- Source map: com um bundle real gerado pelo esbuild, selecionar a função no
+  TypeScript criou um override ancorado no **bundle** (não no fonte) e a
+  instrumentação funcionou em runtime.
 - Glob: override criado em `app.a3f9b1.js` continuou valendo em `app.ff0099.js`
   depois de um "deploy" que trocou nome **e** conteúdo do bundle.
 - Diff nos dois modos, com o modo servidor buscando o corpo real do site
@@ -206,6 +232,9 @@ seus overrides reais intocados e, de quebra, faz o lock de instância única (qu
   preservados.
 
 ## Limitações conhecidas (roadmap)
+
+- Editar o fonte original e regerar o bundle não é possível (exigiria o build do
+  site). O fonte é leitura; a edição continua no bundle.
 - Sem edição de headers/redirect por regra (só block); sem replay de request.
 - `Expor global` só para arquivos JS externos (não inline em HTML).
 - Streaming (SSE/WebSocket) não é interceptado no estágio de Response (por design).

@@ -23,12 +23,25 @@ import { applyPrettyEdits, canPrettify, makeAnchor, mapRange } from '@/lib/prett
 import { DiffView, type DiffMode } from './DiffView'
 import { overrideMatches, suggestPattern } from '@shared/glob'
 import { describeForHumans, describeRange } from '@shared/analyze'
+import { languageFromSource, loadSourceMap, originalOffsetToGenerated } from '@/lib/sourcemap'
 import type { OverrideEntry } from '@shared/schemas'
 
 const GLOBAL_NAME_RE = /^[A-Za-z_$][A-Za-z0-9_$]*$/
 
 type PendingExpose = { selection: string; prefix: string; suffix: string }
 type PendingWatch = PendingExpose & { descricao: string; sugestao: string }
+
+/** Recorta a âncora (trecho + contexto) de um intervalo no texto do bundle. */
+function ancoraEm(base: string, start: number, end: number) {
+  return {
+    selection: base.slice(start, end),
+    prefix: base.slice(Math.max(0, start - 80), start),
+    suffix: base.slice(end, end + 80),
+    base,
+    start,
+    end
+  }
+}
 
 /**
  * Traduz a seleção do editor para o espaço do arquivo original (quando a visão
@@ -50,14 +63,36 @@ function ancoraDaSelecao(
     full = file.pretty.anchor.base
   }
 
-  return {
-    selection: full.slice(start, end),
-    prefix: full.slice(Math.max(0, start - 80), start),
-    suffix: full.slice(end, end + 80),
-    base: full,
-    start,
-    end
-  }
+  return ancoraEm(full, start, end)
+}
+
+/**
+ * Seleção feita no fonte original: mapeia o início para o bundle e deixa o AST
+ * escolher o nó inteiro que começa ali. A ponta final do mapeamento costuma ser
+ * imprecisa, então não dependemos dela — o nó do bundle é a âncora.
+ */
+function ancoraViaSourceMap(
+  file: EditorFile,
+  model: import('monaco-editor').editor.ITextModel,
+  sel: import('monaco-editor').Selection
+): ReturnType<typeof ancoraEm> | null {
+  if (!file.sourceMap || file.viewingSource == null) return null
+  const sourceText = file.sourceMap.contents[file.viewingSource]?.text
+  if (!sourceText) return null
+
+  const inicio = model.getOffsetAt(sel.getStartPosition())
+  const gerado = originalOffsetToGenerated(
+    file.sourceMap,
+    file.viewingSource,
+    sourceText,
+    inicio,
+    file.text
+  )
+  if (gerado === null) return null
+
+  const info = describeRange(file.text, gerado, gerado)
+  if (!info) return null
+  return ancoraEm(file.text, info.start, info.end)
 }
 
 export function EditorPanel() {
@@ -71,6 +106,8 @@ export function EditorPanel() {
   const markFileSaved = useApp((s) => s.markFileSaved)
   const setFilePretty = useApp((s) => s.setFilePretty)
   const commitFileText = useApp((s) => s.commitFileText)
+  const setFileSourceMap = useApp((s) => s.setFileSourceMap)
+  const setViewingSource = useApp((s) => s.setViewingSource)
 
   const file = files.find((f) => f.url === activeFileUrl)
 
@@ -83,9 +120,18 @@ export function EditorPanel() {
     const s = useApp.getState()
     return s.files.find((f) => f.url === s.activeFileUrl)
   }
+  /**
+   * O fonte original é sempre leitura: aplicar uma edição dele de volta no
+   * bundle exigiria rodar o build do site. Expor e Observar continuam
+   * funcionando porque ancoram por posição, não por reescrita.
+   */
+  const sourceAtual =
+    file?.sourceMap && file.viewingSource != null ? file.sourceMap.contents[file.viewingSource] : null
+  const viewingSource = Boolean(sourceAtual?.text)
+
   // Sem mapeamento confiável, formatar vira só leitura: editar aqui produziria
   // um override que não dá para reaplicar sobre o arquivo do servidor.
-  const readOnly = Boolean(file?.pretty && !file.pretty.anchor.map)
+  const readOnly = Boolean(file?.pretty && !file.pretty.anchor.map) || viewingSource
 
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null)
   const editorHostRef = useRef<HTMLDivElement>(null)
@@ -209,12 +255,15 @@ export function EditorPanel() {
       return
     }
 
-    // A âncora precisa casar com o arquivo que o servidor entrega, não com a
-    // versão formatada: traduz a seleção de volta para o espaço original.
-    const ancora = ancoraDaSelecao(f, model, sel)
+    // A âncora sempre casa com o arquivo que o servidor entrega: no fonte
+    // original passa pelo source map, na visão formatada pelo mapa de posições.
+    const ancora = f.viewingSource != null ? ancoraViaSourceMap(f, model, sel) : ancoraDaSelecao(f, model, sel)
     if (!ancora) {
-      toast.error('Não é possível expor a partir da visão formatada neste arquivo', {
-        description: 'Desligue a formatação e selecione o trecho novamente.'
+      toast.error('Não foi possível localizar esta seleção no arquivo servido', {
+        description:
+          f.viewingSource != null
+            ? 'Este ponto do fonte não tem correspondência no bundle (tipos e comentários somem no build). Escolha um trecho de código executável.'
+            : 'Desligue a formatação e selecione o trecho novamente.'
       })
       return
     }
@@ -249,10 +298,15 @@ export function EditorPanel() {
       return
     }
 
-    const ancora = ancoraDaSelecao(f, model, sel)
+    // No fonte original a seleção precisa ser traduzida para o bundle, que é o
+    // arquivo que o servidor entrega e onde o override é ancorado.
+    const ancora = f.viewingSource != null ? ancoraViaSourceMap(f, model, sel) : ancoraDaSelecao(f, model, sel)
     if (!ancora || !ancora.selection.trim()) {
-      toast.error('Não foi possível mapear a seleção', {
-        description: 'Desligue a formatação e selecione o trecho novamente.'
+      toast.error('Não foi possível localizar esta seleção no arquivo servido', {
+        description:
+          f.viewingSource != null
+            ? 'Este ponto do fonte não tem correspondência no bundle. Escolha um trecho de código executável.'
+            : 'Desligue a formatação e selecione o trecho novamente.'
       })
       return
     }
@@ -357,6 +411,29 @@ export function EditorPanel() {
     setDiffMode(null)
   }, [activeFileUrl])
 
+  // Procura o source map assim que um arquivo JS é aberto.
+  useEffect(() => {
+    if (!file || file.sourceMap !== undefined || file.language !== 'javascript') return
+    let cancelado = false
+    const url = file.url
+    loadSourceMap(url, file.originalText)
+      .then((mapa) => {
+        if (cancelado) return
+        setFileSourceMap(url, mapa)
+        if (mapa) {
+          toast.info('Source map encontrado', {
+            description: `${mapa.contents.length} arquivo(s) de origem disponíveis no seletor.`
+          })
+        }
+      })
+      .catch(() => {
+        if (!cancelado) setFileSourceMap(url, null)
+      })
+    return () => {
+      cancelado = true
+    }
+  }, [file?.url, file?.sourceMap, file?.language])
+
   /**
    * O Monaco costuma montar aqui com o painel ainda escondido (troca de aba,
    * volta do diff): mede 0 e fica preso em 5x5 — o automaticLayout dele não se
@@ -449,6 +526,31 @@ export function EditorPanel() {
             {file.pretty.anchor.map ? 'formatado' : 'formatado (leitura)'}
           </Badge>
         )}
+        {file.sourceMap && (
+          <select
+            value={file.viewingSource ?? ''}
+            onChange={(e) => {
+              const v = e.target.value
+              setViewingSource(file.url, v === '' ? null : Number(v))
+              setDiffMode(null)
+            }}
+            className="h-6 max-w-[180px] rounded-md border-none bg-secondary/60 px-1.5 text-[11px] outline-none"
+            title="Ver o fonte original mapeado pelo source map"
+          >
+            <option value="">bundle servido</option>
+            {file.sourceMap.contents.map((c, i) => (
+              <option key={c.source} value={i} disabled={!c.text}>
+                {c.label}
+                {c.text ? '' : ' (indisponível)'}
+              </option>
+            ))}
+          </select>
+        )}
+        {viewingSource && (
+          <Badge variant="outline" className="h-4 border-emerald-500/50 px-1.5 text-[9px] text-emerald-400">
+            fonte original · leitura
+          </Badge>
+        )}
         <Button
           size="sm"
           variant="secondary"
@@ -458,7 +560,7 @@ export function EditorPanel() {
         >
           <Save className="mr-1 h-3 w-3" /> Salvar
         </Button>
-        {canPrettify(file.language) && (
+        {canPrettify(file.language) && !viewingSource && (
           <Button
             size="sm"
             variant={file.pretty ? 'secondary' : 'ghost'}
@@ -469,15 +571,17 @@ export function EditorPanel() {
             <Braces className="mr-1 h-3 w-3" /> Formatar
           </Button>
         )}
-        <Button
-          size="sm"
-          variant={diffMode ? 'secondary' : 'ghost'}
-          className="h-6 px-2 text-[11px]"
-          onClick={() => setDiffMode(diffMode ? null : 'mine')}
-          title="Comparar lado a lado"
-        >
-          <GitCompare className="mr-1 h-3 w-3" /> Diff
-        </Button>
+        {!viewingSource && (
+          <Button
+            size="sm"
+            variant={diffMode ? 'secondary' : 'ghost'}
+            className="h-6 px-2 text-[11px]"
+            onClick={() => setDiffMode(diffMode ? null : 'mine')}
+            title="Comparar mudanças"
+          >
+            <GitCompare className="mr-1 h-3 w-3" /> Diff
+          </Button>
+        )}
         {diffMode && (
           <select
             value={diffMode}
@@ -556,10 +660,32 @@ export function EditorPanel() {
         ) : (
         <Editor
           height="100%"
-          path={file.pretty ? `${file.url}?pretty` : file.url}
-          language={file.language}
-          value={file.pretty ? file.pretty.prettyText : file.text}
-          onChange={(v) => updateFileText(file.url, v ?? '')}
+          path={
+            viewingSource
+              ? `${file.url}?source=${file.viewingSource}`
+              : file.pretty
+                ? `${file.url}?pretty`
+                : file.url
+          }
+          language={
+            viewingSource ? languageFromSource(sourceAtual!.source) : file.language
+          }
+          value={
+            viewingSource
+              ? (sourceAtual!.text as string)
+              : file.pretty
+                ? file.pretty.prettyText
+                : file.text
+          }
+          onChange={(v) => {
+            // Trocar para a visão do fonte troca o value do Monaco e dispara
+            // onChange. Sem esta guarda, o texto do bundle no store seria
+            // substituído pelo TypeScript e o override salvaria o fonte.
+            // O estado vem do store porque o closure do Monaco fica obsoleto.
+            const atual = currentFile()
+            if (!atual || atual.viewingSource != null) return
+            updateFileText(atual.url, v ?? '')
+          }}
           onMount={onMount}
           theme="vs-dark"
           options={{

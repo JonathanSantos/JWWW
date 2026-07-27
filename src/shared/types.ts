@@ -81,6 +81,8 @@ export interface JwwwApi {
   }
   net: {
     getBody(tabId: number, requestId: string, url: string): Promise<{ ok: boolean; text?: string; error?: string }>
+    /** busca texto auxiliar (source map, fonte original) sem esbarrar em CORS */
+    fetchText(url: string): Promise<{ ok: boolean; text?: string; error?: string }>
     clear(tabId: number): Promise<void>
     throttle(tabId: number, preset: ThrottlePreset): Promise<void>
     getDisableCsp(): Promise<boolean>

@@ -31,6 +31,7 @@ contextBridge.exposeInMainWorld('api', {
   },
   net: {
     getBody: (tabId: number, requestId: string, url: string) => invoke('net:getBody', { tabId, requestId, url }),
+    fetchText: (url: string) => invoke('net:fetchText', url),
     clear: (tabId: number) => invoke('net:clearLog', tabId),
     throttle: (tabId: number, preset: string) => invoke('net:throttle', { tabId, preset }),
     getDisableCsp: () => invoke('net:getDisableCsp'),

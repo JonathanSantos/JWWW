@@ -10,10 +10,11 @@
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "preview": "electron-vite preview",
     "test": "npm run test:unit && npm run test:e2e",
-    "test:unit": "tsx tests/prettify.test.ts && tsx tests/glob.test.ts && tsx tests/analyze.test.ts",
+    "test:unit": "tsx tests/prettify.test.ts && tsx tests/glob.test.ts && tsx tests/analyze.test.ts && tsx tests/sourcemap.test.ts",
     "test:e2e": "npm run build && playwright test"
   },
   "dependencies": {
+    "@jridgewell/trace-mapping": "^0.3.31",
     "@monaco-editor/react": "^4.7.0",
     "@types/js-beautify": "^1.14.3",
     "acorn": "^8.14.1",

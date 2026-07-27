@@ -3,6 +3,7 @@ import type { BusMessage, NetEntry, OverrideStatusEvent, TabState, WatchEvent } 
 import type { NetRule, OverrideEntry, UserScript, Workspace } from '@shared/schemas'
 
 import type { PrettyAnchor } from '@/lib/prettify'
+import type { LoadedSourceMap } from '@/lib/sourcemap'
 
 export type EditorFile = {
   url: string
@@ -18,6 +19,13 @@ export type EditorFile = {
    * `prettyText`; `text` só é recalculado a partir dele na hora de salvar.
    */
   pretty?: { anchor: PrettyAnchor; prettyText: string }
+  /**
+   * Source map do bundle, quando o site publica um. `undefined` = ainda não
+   * procuramos; `null` = procuramos e não há.
+   */
+  sourceMap?: LoadedSourceMap | null
+  /** índice em sourceMap.contents sendo visualizado; null = o bundle */
+  viewingSource?: number | null
 }
 
 type AppState = {
@@ -56,6 +64,8 @@ type AppState = {
   markFileSaved: (url: string) => void
   setFilePretty: (url: string, pretty: EditorFile['pretty']) => void
   commitFileText: (url: string, text: string) => void
+  setFileSourceMap: (url: string, sourceMap: LoadedSourceMap | null) => void
+  setViewingSource: (url: string, index: number | null) => void
 }
 
 export const useApp = create<AppState>((set) => ({
@@ -154,6 +164,16 @@ export const useApp = create<AppState>((set) => ({
   commitFileText: (url, text) =>
     set((s) => ({
       files: s.files.map((f) => (f.url === url ? { ...f, text } : f))
+    })),
+
+  setFileSourceMap: (url, sourceMap) =>
+    set((s) => ({
+      files: s.files.map((f) => (f.url === url ? { ...f, sourceMap } : f))
+    })),
+
+  setViewingSource: (url, viewingSource) =>
+    set((s) => ({
+      files: s.files.map((f) => (f.url === url ? { ...f, viewingSource } : f))
     }))
 }))
 

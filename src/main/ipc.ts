@@ -95,6 +95,23 @@ export function registerIpc(ctx: IpcContext) {
     }
   })
 
+  /**
+   * Busca texto auxiliar do mesmo contexto de navegação (source maps e fontes
+   * originais). Vai pelo main porque a UI tem outra origem e sofreria CORS.
+   */
+  handleUi('net:fetchText', async (url: unknown) => {
+    const alvo = z.string().url().parse(url)
+    try {
+      const res = await session.fromPartition('persist:jwww').fetch(alvo)
+      if (!res.ok) return { ok: false as const, error: `HTTP ${res.status}` }
+      const text = await res.text()
+      if (text.length > MAX_BODY_BYTES) return { ok: false as const, error: 'Arquivo muito grande (>8MB).' }
+      return { ok: true as const, text }
+    } catch (err) {
+      return { ok: false as const, error: String(err) }
+    }
+  })
+
   handleUi('net:clearLog', (tabId: unknown) => {
     ctx.tabs.get(z.number().parse(tabId))?.dbg.clearLog()
   })
