@@ -179,5 +179,45 @@ console.log('\n9. catálogo aponta para o lugar certo')
   )
 }
 
+
+console.log('\n10. recorte: instrumentar só um trecho')
+{
+  const codigo = [
+    'function foraDeCima(){return 1}',
+    'function dentro(){return 2}',
+    'function tambemDentro(){return 3}',
+    'function foraDeBaixo(){return 4}'
+  ].join('\n')
+
+  const inicio = codigo.indexOf('function dentro')
+  const fim = codigo.indexOf('function foraDeBaixo')
+  const r = applyExecutionMap(codigo, 'teste', { from: inicio, to: fim })
+
+  check('só as funções do trecho entram no catálogo', r.catalog.length === 2, r.catalog.map((f) => f.name))
+  check(
+    'e são as certas',
+    r.catalog.every((f) => f.name === 'dentro' || f.name === 'tambemDentro'),
+    r.catalog.map((f) => f.name)
+  )
+  check('as de fora não são instrumentadas', !r.text.includes('foraDeCima=globalThis.__jwwwMap'))
+  check('as de dentro são', r.text.includes('dentro=globalThis.__jwwwMap'))
+  check('o resultado continua sendo JS válido', r.status === 'applied')
+
+  // uma função cortada ao meio não pode entrar: abriria o embrulho sem fechar
+  const meio = applyExecutionMap(codigo, 'teste', { from: inicio, to: inicio + 20 })
+  check('função cortada ao meio fica de fora', meio.status === 'failed', meio.message)
+  check('e o original é devolvido intacto', meio.text === codigo)
+}
+
+console.log('\n11. recorte respeita o limite do arquivo inteiro')
+{
+  const muitas = Array.from({ length: 6100 }, (_, i) => `function f${i}(){return ${i}}`).join('\n')
+  const corte = muitas.indexOf('function f10(')
+  const fim = muitas.indexOf('function f20(')
+  const r = applyExecutionMap(muitas, 'teste', { from: corte, to: fim })
+  check('arquivo grande pode ser mapeado por partes', r.status === 'applied', r.message)
+  check('com só as funções do recorte', r.catalog.length === 10, r.catalog.length)
+}
+
 console.log(failures === 0 ? '\n✅ todos os testes passaram\n' : `\n❌ ${failures} falha(s)\n`)
 process.exit(failures === 0 ? 0 : 1)

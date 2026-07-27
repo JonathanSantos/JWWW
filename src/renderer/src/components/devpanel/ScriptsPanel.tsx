@@ -1,13 +1,22 @@
 import { useEffect, useState } from 'react'
 import Editor from '@monaco-editor/react'
-import { Plus, Save, Sparkles, Trash2 } from 'lucide-react'
+import { Plus, Save, ShieldAlert, Sparkles, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle
+} from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
-import { useApp } from '@/store/app'
+import { useActiveTab, useApp } from '@/store/app'
+import { ehPadraoAmplo, globMatch, padraoDeOrigem } from '@shared/glob'
 import type { UserScript } from '@shared/schemas'
 
 const TEMPLATE = `// Roda no MUNDO DA PÁGINA, com a origem do site — sem sandbox de extensão.
@@ -111,13 +120,25 @@ painel.render(({ html }) => html\`
 
 export function ScriptsPanel() {
   const scripts = useApp((s) => s.scripts)
+  const aba = useActiveTab()
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [name, setName] = useState('')
   const [matches, setMatches] = useState('')
   const [runAt, setRunAt] = useState<'document-start' | 'document-end'>('document-end')
   const [code, setCode] = useState('')
+  const [pendenteAmplo, setPendenteAmplo] = useState<{ entry: UserScript; amplos: string[] } | null>(
+    null
+  )
 
   const selected = scripts.find((s) => s.id === selectedId)
+  const urlAtiva = aba?.url ?? ''
+  const padraoDaAba = padraoDeOrigem(urlAtiva)
+
+  /** Um script novo nasce preso à página em que você está, não em todas. */
+  const padraoInicial = () => padraoDaAba ?? ''
+
+  const rodaNestaPagina = (s: UserScript) =>
+    s.enabled && Boolean(urlAtiva) && s.matches.some((p) => globMatch(p, urlAtiva))
 
   useEffect(() => {
     if (selected) {
@@ -131,7 +152,7 @@ export function ScriptsPanel() {
   function usarModelo(modelo: (typeof MODELOS)[number]) {
     setSelectedId(null)
     setName(modelo.nome)
-    setMatches('*')
+    setMatches(padraoInicial())
     setRunAt('document-end')
     setCode(modelo.codigo)
   }
@@ -139,21 +160,21 @@ export function ScriptsPanel() {
   function newScript() {
     setSelectedId(null)
     setName('Novo script')
-    setMatches('*')
+    setMatches(padraoInicial())
     setRunAt('document-end')
     setCode(TEMPLATE)
   }
 
-  async function save() {
+  function montar(): UserScript | null {
     const patterns = matches
       .split('\n')
       .map((m) => m.trim())
       .filter(Boolean)
     if (!name.trim() || patterns.length === 0) {
       toast.error('Preencha nome e ao menos um padrão de URL.')
-      return
+      return null
     }
-    const entry: UserScript = {
+    return {
       id: selectedId ?? crypto.randomUUID(),
       name: name.trim(),
       matches: patterns,
@@ -162,9 +183,26 @@ export function ScriptsPanel() {
       enabled: selected?.enabled ?? true,
       updatedAt: Date.now()
     }
+  }
+
+  async function persistir(entry: UserScript) {
     await window.api.scripts.save(entry)
     setSelectedId(entry.id)
+    setPendenteAmplo(null)
     toast.success('Script salvo', { description: 'Recarregue as páginas para aplicar.' })
+  }
+
+  function save() {
+    const entry = montar()
+    if (!entry) return
+    // Um padrão amplo dá ao script a origem de todo site que você abrir. Isso
+    // continua permitido, mas não pode acontecer sem você ter dito que sim.
+    const amplos = entry.matches.filter(ehPadraoAmplo)
+    if (amplos.length > 0) {
+      setPendenteAmplo({ entry, amplos })
+      return
+    }
+    void persistir(entry)
   }
 
   const editing = selectedId !== null || name !== ''
@@ -192,7 +230,23 @@ export function ScriptsPanel() {
                 s.id === selectedId ? 'bg-secondary text-foreground' : 'text-muted-foreground hover:bg-secondary/50'
               )}
             >
+              {rodaNestaPagina(s) ? (
+                <span
+                  className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400"
+                  title="roda nesta página"
+                />
+              ) : (
+                <span className="h-1.5 w-1.5 shrink-0" />
+              )}
               <span className="min-w-0 flex-1 truncate">{s.name}</span>
+              {s.matches.some(ehPadraoAmplo) && (
+                <ShieldAlert
+                  className="h-3 w-3 shrink-0 text-amber-400"
+                  aria-label="roda em todos os sites"
+                >
+                  <title>roda em todos os sites</title>
+                </ShieldAlert>
+              )}
               <Switch
                 checked={s.enabled}
                 onCheckedChange={(v) => window.api.scripts.save({ ...s, enabled: v })}
@@ -272,15 +326,33 @@ export function ScriptsPanel() {
               </Button>
             )}
           </div>
-          <div className="shrink-0 border-b border-border p-2">
+          <div className="shrink-0 space-y-1 border-b border-border p-2">
             <Textarea
               value={matches}
               onChange={(e) => setMatches(e.target.value)}
-              placeholder={'Padrões de URL, um por linha. Ex:\nhttps://*.exemplo.com/*\n*'}
+              placeholder={'Padrões de URL, um por linha. Ex:\nhttps://*.exemplo.com/*'}
               spellCheck={false}
               className="min-h-[44px] select-text font-mono text-[11px]"
               rows={2}
             />
+            <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+              {padraoDaAba && !matches.split('\n').includes(padraoDaAba) && (
+                <button
+                  onClick={() => setMatches((m) => (m.trim() ? `${m.trim()}\n${padraoDaAba}` : padraoDaAba))}
+                  className="rounded px-1 py-0.5 text-sky-400 transition-colors hover:bg-secondary/60"
+                >
+                  + {padraoDaAba}
+                </button>
+              )}
+              {matches
+                .split('\n')
+                .map((m) => m.trim())
+                .filter((m) => m && ehPadraoAmplo(m)).length > 0 && (
+                <span className="flex items-center gap-1 text-amber-400">
+                  <ShieldAlert className="h-3 w-3" /> este padrão roda em todos os sites
+                </span>
+              )}
+            </div>
           </div>
           <div className="min-h-0 flex-1 select-text">
             <Editor
@@ -299,6 +371,57 @@ export function ScriptsPanel() {
           </div>
         </div>
       )}
+
+      <Dialog open={pendenteAmplo !== null} onOpenChange={(open) => !open && setPendenteAmplo(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ShieldAlert className="h-4 w-4 text-amber-400" /> Rodar em todos os sites?
+            </DialogTitle>
+            <DialogDescription asChild>
+              <div className="space-y-2">
+                <p>
+                  <code className="font-mono text-foreground/90">
+                    {pendenteAmplo?.amplos.join('  ')}
+                  </code>{' '}
+                  casa com qualquer URL.
+                </p>
+                <p>
+                  O script vai rodar em <strong className="text-foreground/90">toda página que você abrir</strong> —
+                  inclusive banco, e-mail e painéis internos — no mundo da página e com a origem do
+                  site, com acesso a tudo que estiver na tela.
+                </p>
+              </div>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-1 sm:justify-between">
+            <Button variant="ghost" size="sm" onClick={() => setPendenteAmplo(null)}>
+              Cancelar
+            </Button>
+            <div className="flex gap-1">
+              {padraoDaAba && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => {
+                    setMatches(padraoDaAba)
+                    setPendenteAmplo(null)
+                  }}
+                >
+                  Limitar a {new URL(urlAtiva).host}
+                </Button>
+              )}
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={() => pendenteAmplo && void persistir(pendenteAmplo.entry)}
+              >
+                Rodar em tudo
+              </Button>
+            </div>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

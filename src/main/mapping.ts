@@ -21,16 +21,48 @@ export const MAP_RUNTIME = `;(() => {
   var agendado = false;
   var agora = (globalThis.performance && performance.now) ? function () { return performance.now() } : function () { return 0 };
 
+  /**
+   * Quanto custa o próprio embrulho, medido nesta página.
+   *
+   * Sem esse número o painel mostra tempos sem dizer quanto deles é a régua, e
+   * o dev não tem como saber se está olhando o código ou a instrumentação. A
+   * medição passa pelo caminho real (inclusive o registro), e depois apaga os
+   * contadores que ela mesma criou para não virar linha no mapa.
+   */
+  var custoPorChamada = null;
+  var CAL = '\\u0000calibragem';
+
+  function calibrar() {
+    try {
+      var vazia = function () {};
+      var envolvida = globalThis.__jwwwMap(CAL, 0, vazia);
+      var N = 2000;
+      for (var a = 0; a < 200; a++) { vazia(); envolvida() }
+      var t0 = agora();
+      for (var i = 0; i < N; i++) vazia();
+      var cru = agora() - t0;
+      var t1 = agora();
+      for (var j = 0; j < N; j++) envolvida();
+      var comEmbrulho = agora() - t1;
+      contadores.delete(CAL + '|0');
+      ordemDeEstreia.delete(CAL + '|0');
+      custoPorChamada = Math.max(0, (comEmbrulho - cru) / N);
+    } catch (e) {
+      custoPorChamada = null;
+    }
+  }
+
   function enviar() {
     agendado = false;
     if (contadores.size === 0) return;
+    if (custoPorChamada === null) calibrar();
     var lote = [];
     contadores.forEach(function (v) {
       lote.push([v.arquivo, v.id, v.c, Math.round(v.proprio * 100) / 100, Math.round(v.total * 100) / 100, v.ordem]);
     });
     contadores.clear();
     try {
-      if (globalThis.__jwwwBridge) globalThis.__jwwwBridge.map({ lote: lote });
+      if (globalThis.__jwwwBridge) globalThis.__jwwwBridge.map({ lote: lote, custoPorChamada: custoPorChamada });
     } catch (e) {}
   }
 
@@ -91,18 +123,28 @@ export function contarFuncoes(body: string): number {
   return collectInstrumentable(body).length
 }
 
+export type MapRange = { from: number; to: number }
+
 /**
- * Instrumenta todas as funções do arquivo. Só usa inserções em pontos — nunca
- * substitui intervalos —, então funções aninhadas não conflitam entre si.
+ * Instrumenta as funções do arquivo — todas, ou só as que cabem no trecho
+ * escolhido. Só usa inserções em pontos — nunca substitui intervalos —, então
+ * funções aninhadas não conflitam entre si.
  */
-export function applyExecutionMap(body: string, fileId: string): MapResult {
-  const funcoes = collectInstrumentable(body)
+export function applyExecutionMap(body: string, fileId: string, range?: MapRange): MapResult {
+  const todas = collectInstrumentable(body)
+  // Só entram as funções inteiramente dentro do recorte: instrumentar metade de
+  // uma função inseriria a abertura sem o fechamento.
+  const funcoes = range
+    ? todas.filter((f) => f.start >= range.from && f.end <= range.to)
+    : todas
   if (funcoes.length === 0) {
     return {
       text: body,
       catalog: [],
       status: 'failed',
-      message: 'Nenhuma função instrumentável encontrada neste arquivo.'
+      message: range
+        ? 'Nenhuma função inteira dentro do trecho escolhido.'
+        : 'Nenhuma função instrumentável encontrada neste arquivo.'
     }
   }
   if (funcoes.length > LIMITE_FUNCOES) {

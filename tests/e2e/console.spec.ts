@@ -218,3 +218,112 @@ test('não polui o console com avisos do próprio Electron', async () => {
   ).toHaveCount(0)
   await expect(app.ui.getByText(/sandbox_bundle/)).toHaveCount(0)
 })
+
+test('mensagens iguais e seguidas viram uma linha com contador', async () => {
+  site = await new FixtureSite()
+    .set(
+      '/',
+      PAGINA(`
+        for (var i = 0; i < 50; i++) console.log("dentro do laço");
+        console.log("depois do laço");
+      `)
+    )
+    .start()
+  app = await launchApp({ startUrl: site.url('/') })
+  await abrirConsole(app)
+
+  await expect(app.ui.getByText('dentro do laço')).toHaveCount(1, { timeout: 25_000 })
+  await expect(app.ui.getByTitle(/a mesma mensagem 50 vezes seguidas/)).toBeVisible()
+
+  // e não pode engolir o que veio depois — era esse o problema de encher a lista
+  await expect(app.ui.getByText('depois do laço')).toBeVisible()
+})
+
+test('avaliações repetidas não são agrupadas', async () => {
+  site = await new FixtureSite().set('/', PAGINA('')).start()
+  app = await launchApp({ startUrl: site.url('/') })
+  await abrirConsole(app)
+
+  await avaliar(app, '"igual"')
+  await expect(app.ui.getByText(/igual/).first()).toBeVisible({ timeout: 25_000 })
+  await avaliar(app, '"igual"')
+
+  // duas entradas e dois resultados: cada avaliação é um evento seu
+  await expect(app.ui.getByText(/igual/)).toHaveCount(4, { timeout: 15_000 })
+})
+
+test('a rolagem não é sequestrada quando você subiu para ler', async () => {
+  site = await new FixtureSite()
+    .set(
+      '/',
+      PAGINA(`
+        for (var i = 0; i < 120; i++) console.log("linha " + i);
+        window.logarMais = () => { for (var i = 0; i < 30; i++) console.log("nova " + i) };
+      `)
+    )
+    .start()
+  app = await launchApp({ startUrl: site.url('/') })
+  await abrirConsole(app)
+  await expect(app.ui.getByText('linha 119')).toBeVisible({ timeout: 25_000 })
+
+  const lista = app.ui.locator('div.overflow-y-auto.font-mono').first()
+  await lista.evaluate((el) => el.scrollTo({ top: 0 }))
+  const antes = await lista.evaluate((el) => el.scrollTop)
+
+  await app.pageEval('window.logarMais()')
+  await expect(app.ui.getByText('nova 29')).toBeAttached({ timeout: 20_000 })
+
+  const depois = await lista.evaluate((el) => el.scrollTop)
+  expect(depois, 'ficar no topo lendo não pode ser interrompido').toBe(antes)
+
+  // mas quem está no fim continua acompanhando
+  await lista.evaluate((el) => el.scrollTo({ top: el.scrollHeight }))
+  await app.pageEval('console.log("a última de todas")')
+  await expect(app.ui.getByText('a última de todas')).toBeInViewport({ timeout: 20_000 })
+})
+
+test('clicar na origem abre o arquivo no editor, na linha certa', async () => {
+  const APP_JS = ['// linha 1', '// linha 2', 'function avisar() {', '  console.warn("veio daqui")', '}', 'avisar()'].join(
+    '\n'
+  )
+  site = await new FixtureSite()
+    .set(
+      '/',
+      `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>console</title>` +
+        `<script src="/app.js"></script></head><body></body></html>`
+    )
+    .js('/app.js', APP_JS)
+    .start()
+  app = await launchApp({ startUrl: site.url('/') })
+  await abrirConsole(app)
+  await expect(app.ui.getByText('veio daqui')).toBeVisible({ timeout: 25_000 })
+
+  await app.ui.getByTitle(/Abrir no editor/).click()
+
+  // o editor abriu com o arquivo certo e o cursor foi para a linha do aviso
+  await expect(app.ui.getByRole('tab', { name: 'Editor', exact: true })).toHaveAttribute(
+    'data-state',
+    'active',
+    { timeout: 15_000 }
+  )
+  await expect(app.ui.locator('.monaco-editor')).toBeVisible({ timeout: 20_000 })
+
+  // O cursor tem que estar na linha do console.warn, não no começo do arquivo.
+  // O Monaco posiciona a linha atual pelo elemento que envolve a decoração, não
+  // pela decoração em si — daí o parentElement.
+  await expect
+    .poll(
+      () =>
+        app!.ui.evaluate(() => {
+          const atual = document.querySelector<HTMLElement>(
+            '.monaco-editor .view-overlays .current-line'
+          )?.parentElement
+          const linhas = [...document.querySelectorAll<HTMLElement>('.monaco-editor .view-line')]
+          const alvo = linhas.find((l) => l.textContent?.includes('console.warn'))
+          if (!atual || !alvo) return 'ainda não renderizou'
+          return atual.style.top === alvo.style.top ? 'na linha do warn' : 'em outra linha'
+        }),
+      { timeout: 20_000 }
+    )
+    .toBe('na linha do warn')
+})

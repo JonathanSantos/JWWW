@@ -47,6 +47,16 @@ type AppState = {
   rules: NetRule[]
   workspaces: Workspace[]
   statuses: OverrideStatusEvent[]
+  /**
+   * Último status de cada override e de cada URL.
+   *
+   * `statuses` é uma fila curta que serve de histórico; o estado atual não pode
+   * viver nela, senão uma página com muitos overrides empurra para fora
+   * justamente o aviso de que um patch degradou — que é o dado mais importante
+   * do sistema. Aqui um override ocupa uma posição só, e ela não some.
+   */
+  statusPorOverride: Record<string, OverrideStatusEvent>
+  statusPorUrl: Record<string, OverrideStatusEvent>
   busLog: BusMessage[]
   /** console da página, por aba */
   consoleLog: Record<number, ConsoleEntry[]>
@@ -58,8 +68,16 @@ type AppState = {
     string,
     Record<number, { calls: number; proprio: number; total: number; ordem: number }>
   >
+  /** custo em ms de uma chamada instrumentada, medido na própria página */
+  custoPorChamada: number | null
   files: EditorFile[]
   activeFileUrl: string | null
+  /**
+   * Pedido de "pule para esta linha" feito por outro painel (o console, ao
+   * clicar na origem de uma mensagem). O editor consome e limpa — é o que liga
+   * "vi o erro" a "vou corrigir" sem o dev procurar o arquivo na mão.
+   */
+  revelar: { url: string; linha: number } | null
 
   setTabs: (tabs: TabState[]) => void
   upsertNet: (entries: NetEntry[]) => void
@@ -83,6 +101,8 @@ type AppState = {
   addMapCounts: (ev: MapCountsEvent) => void
   clearMapCounts: (fileId: string) => void
   clearMapCountsForTab: (tabId: number) => void
+  pedirRevelar: (url: string, linha: number) => void
+  revelado: () => void
   openFile: (f: EditorFile) => void
   closeFile: (url: string) => void
   setActiveFile: (url: string) => void
@@ -104,13 +124,17 @@ export const useApp = create<AppState>((set) => ({
   rules: [],
   workspaces: [],
   statuses: [],
+  statusPorOverride: {},
+  statusPorUrl: {},
   busLog: [],
   consoleLog: {},
   watchLog: [],
   mapCatalogs: {},
   mapCounts: {},
+  custoPorChamada: null,
   files: [],
   activeFileUrl: null,
+  revelar: null,
 
   /**
    * Aba fechada tem que levar embora o log de rede e os catálogos do mapa dela.
@@ -164,13 +188,29 @@ export const useApp = create<AppState>((set) => ({
 
   togglePanel: () => set((s) => ({ panelOpen: !s.panelOpen })),
   setPanelTab: (panelTab) => set({ panelTab, panelOpen: true }),
-  setOverrides: (overrides) => set({ overrides }),
+  setOverrides: (overrides) =>
+    set((s) => {
+      // Override removido não pode deixar para trás um status órfão que ainda
+      // pinta o arquivo de vermelho na árvore.
+      const vivos = new Set(overrides.map((o) => o.id))
+      const statusPorOverride = Object.fromEntries(
+        Object.entries(s.statusPorOverride).filter(([id]) => vivos.has(id))
+      )
+      const statusPorUrl = Object.fromEntries(
+        Object.entries(s.statusPorUrl).filter(([, ev]) => vivos.has(ev.overrideId))
+      )
+      return { overrides, statusPorOverride, statusPorUrl }
+    }),
   setScripts: (scripts) => set({ scripts }),
   setRules: (rules) => set({ rules }),
   setWorkspaces: (workspaces) => set({ workspaces }),
 
   pushStatus: (ev) =>
-    set((s) => ({ statuses: [...s.statuses.slice(-199), ev] })),
+    set((s) => ({
+      statuses: [...s.statuses.slice(-199), ev],
+      statusPorOverride: { ...s.statusPorOverride, [ev.overrideId]: ev },
+      statusPorUrl: { ...s.statusPorUrl, [ev.url]: ev }
+    })),
 
   pushBus: (m) => set((s) => ({ busLog: [...s.busLog.slice(-199), m] })),
   setBusLog: (busLog) => set({ busLog }),
@@ -230,6 +270,8 @@ export const useApp = create<AppState>((set) => ({
   addMapCounts: (ev) =>
     set((s) => {
       const porArquivo = { ...s.mapCounts }
+      const custoPorChamada =
+        typeof ev.custoPorChamada === 'number' ? ev.custoPorChamada : s.custoPorChamada
       for (const [fileId, id, calls, proprio, total, ordem] of ev.lote) {
         const atual = { ...(porArquivo[fileId] ?? {}) }
         const anterior = atual[id]
@@ -244,11 +286,13 @@ export const useApp = create<AppState>((set) => ({
           : { calls, proprio, total, ordem }
         porArquivo[fileId] = atual
       }
-      return { mapCounts: porArquivo }
+      return { mapCounts: porArquivo, custoPorChamada }
     }),
 
   clearMapCounts: (fileId) => set((s) => ({ mapCounts: { ...s.mapCounts, [fileId]: {} } })),
 
+  pedirRevelar: (url, linha) => set({ revelar: { url, linha } }),
+  revelado: () => set({ revelar: null }),
   openFile: (f) =>
     set((s) => {
       const existing = s.files.find((x) => x.url === f.url)

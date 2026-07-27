@@ -1,4 +1,12 @@
-import { BrowserWindow, dialog, ipcMain, session, type IpcMainInvokeEvent, type WebContents } from 'electron'
+import {
+  BrowserWindow,
+  clipboard,
+  dialog,
+  ipcMain,
+  session,
+  type IpcMainInvokeEvent,
+  type WebContents
+} from 'electron'
 import { readFile, writeFile } from 'fs/promises'
 import { z } from 'zod'
 import {
@@ -175,6 +183,43 @@ export function registerIpc(ctx: IpcContext) {
     uiSend('overrides:changed')
   })
 
+  /**
+   * Interruptor geral. Quando algo quebra, a primeira pergunta é "sou eu ou é o
+   * site?" — e responder isso desligando override por override não é resposta.
+   */
+  handleUi('overrides:setAllEnabled', (enabled: unknown) => {
+    const valor = z.boolean().parse(enabled)
+    for (const o of ctx.overridesStore.all()) {
+      if (o.enabled !== valor) ctx.overridesStore.upsert({ ...o, enabled: valor })
+    }
+    ctx.refreshScripts()
+    uiSend('overrides:changed')
+  })
+
+  /** Copiar/colar leva o override inteiro — inclusive o original que ele ancora. */
+  handleUi('overrides:copy', (id: unknown) => {
+    const o = ctx.overridesStore.all().find((x) => x.id === z.string().parse(id))
+    if (!o) return { ok: false, error: 'override não encontrado' }
+    clipboard.writeText(JSON.stringify(o, null, 2))
+    return { ok: true }
+  })
+
+  handleUi('overrides:paste', () => {
+    const texto = clipboard.readText().trim()
+    if (!texto) return { ok: false, error: 'a área de transferência está vazia' }
+    try {
+      const bruto = OverrideEntrySchema.parse(JSON.parse(texto))
+      // Id novo: colar duas vezes cria dois overrides, não sobrescreve o do outro.
+      const entry = { ...bruto, id: crypto.randomUUID(), updatedAt: Date.now() }
+      ctx.overridesStore.upsert(entry)
+      ctx.refreshScripts()
+      uiSend('overrides:changed')
+      return { ok: true, url: entry.url }
+    } catch (err) {
+      return { ok: false, error: 'o conteúdo copiado não é um override do JWWW' }
+    }
+  })
+
   // --- userscripts ---
   handleUi('scripts:list', () => ctx.scriptsStore.all())
   handleUi('scripts:save', (script: unknown) => {
@@ -308,7 +353,9 @@ export function registerIpc(ctx: IpcContext) {
       .array(
         z.tuple([z.string().max(64), z.number(), z.number(), z.number(), z.number(), z.number()])
       )
-      .max(20_000)
+      .max(20_000),
+    /** ms que o embrulho custa por chamada, medido na própria página */
+    custoPorChamada: z.number().nonnegative().nullable().optional()
   })
 
   ipcMain.on('jwww:map', (e, payload: unknown) => {

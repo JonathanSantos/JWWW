@@ -37,6 +37,36 @@ export function looseMatch(pattern: string, value: string): boolean {
   return value.includes(pattern)
 }
 
+/**
+ * Padrão que limita um userscript à origem de uma página.
+ *
+ * É o padrão de um script novo: o default anterior era `*`, e um script escrito
+ * para um site rodava em todos os outros — inclusive no seu banco, com a origem
+ * deles. Um script amplo continua possível, mas passa a ser escolha explícita.
+ */
+export function padraoDeOrigem(url: string): string | null {
+  try {
+    const u = new URL(url)
+    if (!u.protocol.startsWith('http')) return null
+    return `${u.origin}/*`
+  } catch {
+    return null
+  }
+}
+
+/**
+ * URLs de origens sem relação nenhuma entre si. Um padrão que casa com as duas
+ * casa com qualquer coisa — testar é mais confiável do que tentar reconhecer as
+ * várias formas de escrever "tudo" (um asterisco sozinho, `http*`, curingas no
+ * lugar do esquema e do host…).
+ */
+const CANARIOS = ['https://banco.exemplo.com.br/minha-conta', 'http://outra.coisa.dev/a/b?c=1']
+
+/** O padrão roda em qualquer site? Usado para pedir confirmação antes de salvar. */
+export function ehPadraoAmplo(pattern: string): boolean {
+  return CANARIOS.every((u) => globMatch(pattern, u))
+}
+
 const HASHISH = /^(?=.*\d)[a-z0-9]{6,}$/i
 const HEXISH = /^[a-f0-9]{6,}$/i
 

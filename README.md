@@ -51,6 +51,18 @@ interceptada no estágio de Response e:
 
 Ou seja: um override antigo não quebra uma página que mudou de estrutura.
 
+Esse estado é o dado mais importante do sistema, então ele **fica visível onde
+você já está olhando**: cada arquivo na árvore de recursos leva o selo do seu
+estado (`override` / `fuzzy` / `falhou`), e o painel **Overrides** mostra o
+motivo da degradação por escrito — não só o rótulo. O estado atual vive num
+mapa por override, não na fila de eventos: numa página com muitos overrides, a
+fila descartaria justamente o aviso que interessa.
+
+O painel também tem o **interruptor geral**. Quando algo quebra, a primeira
+pergunta é "sou eu ou é o site?", e respondê-la desligando override por override
+não é resposta: um clique desliga todos e recarrega sem cache. E **copiar/colar**
+leva um override inteiro (com o original que ele ancora) para outra pessoa.
+
 ### Expor seleção como global
 
 No Editor, selecione um trecho de JS → "Expor global" → dê um nome. A seleção vira uma âncora
@@ -64,9 +76,22 @@ textual (com contexto antes/depois). No próximo reload o arquivo é patchado em
 
 ### Mapa de execução: "o que roda nesta página?"
 
-Botão **Mapear** no editor. Todas as funções do arquivo passam a ser contadas, e
-o painel **Mapa** responde a pergunta que trava qualquer um diante de um bundle
+Botão **Mapear** no editor. As funções escolhidas passam a ser contadas, e o
+painel **Mapa** responde a pergunta que trava qualquer um diante de um bundle
 minificado de 3 MB: *o que aqui dentro realmente importa?*
+
+**Você escolhe o escopo antes de instrumentar.** Mapear é uma decisão barata num
+arquivo pequeno e cara num bundle, então o botão pergunta: o arquivo inteiro
+(dizendo quantas funções isso significa) ou só o trecho selecionado no editor.
+Funções cortadas ao meio pelo recorte ficam de fora — instrumentar metade
+abriria o embrulho sem fechar. É isso que permite mapear um pedaço de um arquivo
+grande demais para o limite.
+
+**E o painel diz quanto ele próprio está custando.** O runtime mede na página o
+custo do embrulho por chamada e o painel mostra o total: *"a instrumentação
+custa ~0,4µs por chamada e já somou ~8ms nas 20.000 chamadas contadas — 62% do
+tempo medido"*. Passando de um quarto do tempo, o aviso fica amarelo e sugere
+recortar. Sem esse número, os tempos aparecem sem dizer quanto deles é a régua.
 
 O topo do painel dá o número que interessa — "127 de 1.243 funções executaram
 (10%)" —, e a lista vem ranqueada com barra proporcional, para dar pra ler no
@@ -97,7 +122,9 @@ Detalhes de implementação que importam:
   exceções — instrumentar não pode mudar o comportamento do site.
 - Métodos de classe e atalhos de objeto (`foo() {}`) ficam de fora: o intervalo
   do nó cobre só `(){...}` e embrulhar geraria sintaxe inválida.
-- Acima de 6.000 funções o JWWW recusa: o embrulho pesaria mais que o insight.
+- Acima de 6.000 funções o JWWW recusa o arquivo inteiro: o embrulho pesaria
+  mais que o insight. O limite vale sobre o que foi escolhido, então um bundle
+  grande continua mapeável por partes.
 
 ### Observar execução
 
@@ -220,6 +247,19 @@ Injetados via CDP **no mundo da página** — rodam com a origem do site, então
 do site passam pelas proteções de same-origin como se fossem do próprio site. Combine com o bus para
 estender sites com UI própria e comunicação entre abas.
 
+**Trilhos de segurança.** Esse poder é o ponto do projeto, e por isso o alcance
+não pode ser acidental:
+
+- Um script novo nasce preso à **origem da aba atual** (`https://site.com/*`).
+  O padrão antes era `*` — um script escrito para um site rodava em todos os
+  outros, inclusive no seu banco, com a origem deles.
+- Um padrão que casa com qualquer URL **exige confirmação explícita**, e o
+  diálogo oferece limitar à página atual. O reconhecimento não é por texto: o
+  padrão é testado contra URLs de origens sem relação, então `*`, `http*` e
+  curingas no host caem todos na mesma rede.
+- A lista marca com um ponto os scripts que **rodam na página em que você está**,
+  e com um escudo os que rodam em qualquer site.
+
 ### Formatação que não estraga o override
 
 Botão **Formatar** no editor (JS, CSS, HTML, JSON). O detalhe que importa: o
@@ -252,6 +292,17 @@ na página.
   comando (`$0`, `$_`). Enter avalia, ⇧Enter quebra linha, ↑/↓ navegam o
   histórico.
 - O log zera ao navegar, e sai junto quando a aba fecha.
+- Mensagens iguais e seguidas viram **uma linha com contador**. Um `console.log`
+  dentro de laço encheria o painel e empurraria para fora justamente o erro que
+  você procura. O agrupamento acontece antes do corte de exibição, então mil
+  repetições ocupam uma posição, não mil. Entrada e resultado do prompt nunca
+  agrupam: cada avaliação é um evento seu.
+- A rolagem **só acompanha o fim se você já estava no fim**. Subir para ler algo
+  e ser puxado de volta a cada mensagem torna qualquer página que loga em laço
+  impossível de investigar.
+- A origem (`arquivo.js:12`) é **clicável**: abre o arquivo no editor e pula
+  para a linha — o mesmo editor que grava override. É a ponte entre ver o erro
+  e corrigir o erro.
 
 Avisos do próprio Electron são filtrados: eles apareceriam em toda página e não
 têm nada a ver com o site.
@@ -409,6 +460,22 @@ JWWW_PACKAGED_BINARY="/Volumes/JWWW 0.1.0-universal/JWWW.app/Contents/MacOS/JWWW
 - Pacote: o `.app` gerado sobe, carrega o renderer de dentro do asar, aplica
   override no primeiro load, injeta o preload da página e avalia expressão pelo
   console — com a assinatura ad-hoc passando no `codesign --verify --deep`.
+- Userscript novo nasceu com o padrão da página aberta; salvar com `*` abriu o
+  diálogo, cancelar não gravou nada, e o atalho "limitar a este site" trocou o
+  padrão sem salvar sozinho.
+- Estado do override sobreviveu a três reloads seguidos (a fila de eventos não
+  guarda mais o estado atual), e a árvore trocou `override` por `falhou` quando
+  um "deploy" quebrou a âncora — antes o arquivo simplesmente ficava sem selo.
+- Interruptor geral desligou tudo, recarregou e a página voltou ao original;
+  religar trouxe o override de volta. Colar criou um segundo override com id
+  próprio, sem sobrescrever o primeiro.
+- Console: 50 logs iguais viraram uma linha com contador sem engolir o que veio
+  depois; rolar para o topo não foi interrompido por mensagem nova; e clicar na
+  origem abriu o arquivo com o cursor na linha da chamada.
+- Mapa: recorte instrumentou só o trecho selecionado — uma função que executou
+  de verdade no load, mas fora do recorte, não aparece no mapa. E 20 mil
+  chamadas de uma função trivial dispararam o aviso de que a instrumentação
+  passou a dominar a medição.
 
 ## Limitações conhecidas (roadmap)
 

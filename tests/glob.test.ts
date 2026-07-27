@@ -1,4 +1,11 @@
-import { globMatch, looseMatch, overrideMatches, suggestPattern } from '../src/shared/glob'
+import {
+  ehPadraoAmplo,
+  globMatch,
+  looseMatch,
+  overrideMatches,
+  padraoDeOrigem,
+  suggestPattern
+} from '../src/shared/glob'
 
 let failures = 0
 function check(name: string, cond: boolean, extra?: unknown) {
@@ -76,6 +83,26 @@ console.log('\n6. looseMatch das regras de rede')
   check('substring sem coringa', looseMatch('analytics', 'https://x.com/analytics/collect'))
   check('glob com coringa', looseMatch('*doubleclick*', 'https://ad.doubleclick.net/x'))
   check('substring não casa ausente', !looseMatch('analytics', 'https://x.com/app.js'))
+}
+
+console.log('\n7. padrão de origem para userscript novo')
+{
+  check('prende à origem', padraoDeOrigem('https://ex.com/a/b?c=1') === 'https://ex.com/*')
+  check('mantém a porta', padraoDeOrigem('http://localhost:5173/x') === 'http://localhost:5173/*')
+  check('o padrão gerado casa a própria página', globMatch('https://ex.com/*', 'https://ex.com/a/b'))
+  check('e não casa outro host', !globMatch('https://ex.com/*', 'https://outro.com/a'))
+  check('recusa about:blank', padraoDeOrigem('about:blank') === null)
+  check('recusa URL inválida', padraoDeOrigem('não é url') === null)
+}
+
+console.log('\n8. reconhece padrão que roda em qualquer site')
+{
+  check('asterisco sozinho', ehPadraoAmplo('*'))
+  check('curinga no esquema e host', ehPadraoAmplo('*://*/*'))
+  check('http mais curinga', ehPadraoAmplo('http*'))
+  check('origem específica não é ampla', !ehPadraoAmplo('https://ex.com/*'))
+  check('subdomínios de um host não é amplo', !ehPadraoAmplo('https://*.ex.com/*'))
+  check('caminho curinga num host não é amplo', !ehPadraoAmplo('https://ex.com/*/app.js'))
 }
 
 console.log(failures === 0 ? '\n✅ todos os testes passaram\n' : `\n❌ ${failures} falha(s)\n`)

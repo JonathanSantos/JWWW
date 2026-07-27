@@ -25,9 +25,17 @@ import { overrideMatches, suggestPattern } from '@shared/glob'
 import { collectInstrumentable, describeForHumans, describeRange } from '@shared/analyze'
 import { LIMITE_FUNCOES } from '@shared/limits'
 import { languageFromSource, loadSourceMap, originalOffsetToGenerated } from '@/lib/sourcemap'
+import { offsetToPosition } from '@shared/sourcemap'
 import type { OverrideEntry } from '@shared/schemas'
 
 const GLOBAL_NAME_RE = /^[A-Za-z_$][A-Za-z0-9_$]*$/
+
+type PendingMapa = {
+  /** texto do arquivo servido, onde os offsets do recorte valem */
+  base: string
+  totalArquivo: number
+  selecao: { from: number; to: number; total: number; label: string } | null
+}
 
 type PendingExpose = { selection: string; prefix: string; suffix: string }
 type PendingWatch = PendingExpose & { descricao: string; sugestao: string }
@@ -144,6 +152,8 @@ export function EditorPanel() {
   const [watchLabel, setWatchLabel] = useState('')
   const [watchStack, setWatchStack] = useState(false)
   const [pendingWatch, setPendingWatch] = useState<PendingWatch | null>(null)
+  const [mapaOpen, setMapaOpen] = useState(false)
+  const [pendingMapa, setPendingMapa] = useState<PendingMapa | null>(null)
 
   const editOverride = file
     ? overrides.find((o) => o.kind === 'edit' && overrideMatches(o, file.url))
@@ -367,28 +377,70 @@ export function EditorPanel() {
     })
   }
 
-  async function toggleMapa() {
+  /**
+   * Abre a escolha do escopo em vez de instrumentar direto.
+   *
+   * Instrumentar o arquivo inteiro é a decisão certa num arquivo pequeno e a
+   * errada num bundle: o embrulho por função passa a pesar mais que o código
+   * medido. Escolher antes — e ver quantas funções isso significa — é o que faz
+   * o mapa continuar honesto fora do caso fácil.
+   */
+  function toggleMapa() {
     const f = currentFile()
     if (!f) return
     const existente = useApp.getState().overrides.find((o) => o.kind === 'map' && overrideMatches(o, f.url))
     if (existente) {
-      await window.api.overrides.remove(existente.id)
-      toast.success('Mapeamento desligado', { description: 'Recarregue a página para remover a instrumentação.' })
+      void window.api.overrides.remove(existente.id).then(() => {
+        toast.success('Mapeamento desligado', {
+          description: 'Recarregue a página para remover a instrumentação.'
+        })
+      })
       return
     }
 
     const base = f.pretty ? f.pretty.anchor.base : f.text
-    const total = collectInstrumentable(base).length
-    if (total === 0) {
+    const todas = collectInstrumentable(base)
+    if (todas.length === 0) {
       toast.error('Nenhuma função instrumentável neste arquivo.')
       return
     }
-    if (total > LIMITE_FUNCOES) {
-      toast.error(`Arquivo com ${total.toLocaleString('pt-BR')} funções`, {
-        description: `Acima do limite de ${LIMITE_FUNCOES.toLocaleString('pt-BR')} — mapear travaria a página.`
-      })
-      return
+
+    // Há seleção? Então dá para oferecer o recorte.
+    let selecao: PendingMapa['selecao'] = null
+    const ed = editorRef.current
+    const sel = ed?.getSelection()
+    const model = ed?.getModel()
+    if (ed && sel && model && !sel.isEmpty() && f.viewingSource == null) {
+      const ancora = ancoraDaSelecao(f, model, sel)
+      if (ancora) {
+        const dentro = todas.filter((fn) => fn.start >= ancora.start && fn.end <= ancora.end)
+        if (dentro.length > 0) {
+          const inicio = offsetToPosition(base, ancora.start)
+          const fim = offsetToPosition(base, ancora.end)
+          selecao = {
+            from: ancora.start,
+            to: ancora.end,
+            total: dentro.length,
+            label:
+              inicio.line === fim.line ? `linha ${inicio.line}` : `linhas ${inicio.line}–${fim.line}`
+          }
+        }
+      }
     }
+
+    setPendingMapa({ base, totalArquivo: todas.length, selecao })
+    setMapaOpen(true)
+  }
+
+  async function confirmarMapa(escopo: 'arquivo' | 'selecao') {
+    const f = currentFile()
+    const p = pendingMapa
+    if (!f || !p) return
+    const range = escopo === 'selecao' && p.selecao ? p.selecao : null
+    const total = range ? range.total : p.totalArquivo
+
+    setMapaOpen(false)
+    setPendingMapa(null)
 
     await window.api.overrides.save({
       id: crypto.randomUUID(),
@@ -396,8 +448,9 @@ export function EditorPanel() {
       kind: 'map',
       enabled: true,
       contentType: 'js',
-      originalHash: await sha256Hex(base),
+      originalHash: await sha256Hex(p.base),
       originalText: '',
+      ...(range ? { mapRange: { from: range.from, to: range.to, label: range.label } } : {}),
       updatedAt: Date.now()
     })
     toast.success(`${total.toLocaleString('pt-BR')} funções instrumentadas`, {
@@ -438,13 +491,33 @@ export function EditorPanel() {
     })
   }
 
+  /**
+   * Aplica um pedido de "pule para esta linha" quando o editor já existe.
+   *
+   * Lê do store em vez de fechar sobre o estado: o pedido costuma chegar
+   * *antes* do Monaco montar (abrir um arquivo novo pelo console monta o editor
+   * depois), e nesse caso quem aplica é o onMount.
+   */
+  const aplicarRevelacao = () => {
+    const ed = editorRef.current
+    const st = useApp.getState()
+    if (!ed || !st.revelar || st.revelar.url !== st.activeFileUrl) return
+    ed.revealLineInCenter(st.revelar.linha)
+    ed.setPosition({ lineNumber: st.revelar.linha, column: 1 })
+    ed.focus()
+    st.revelado()
+  }
+
   // ⌘S salva dentro do Monaco
   const onMount: OnMount = (editor) => {
     editorRef.current = editor
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => saveRef.current())
     // Quando o editor monta com o painel ainda escondido (troca de aba, volta do
     // diff), ele mede 0 e trava em 5x5 — o automaticLayout não se recupera disso.
-    requestAnimationFrame(() => editor.layout())
+    requestAnimationFrame(() => {
+      editor.layout()
+      aplicarRevelacao()
+    })
   }
 
   useEffect(() => {
@@ -457,6 +530,15 @@ export function EditorPanel() {
   useEffect(() => {
     setDiffMode(null)
   }, [activeFileUrl])
+
+  // Pedido de "pule para esta linha" vindo do console, com o editor já montado.
+  const revelar = useApp((s) => s.revelar)
+  useEffect(() => {
+    if (!revelar) return
+    // Um quadro depois: o modelo do arquivo recém-aberto pode não estar no lugar.
+    const id = requestAnimationFrame(aplicarRevelacao)
+    return () => cancelAnimationFrame(id)
+  }, [revelar, activeFileUrl])
 
   // Procura o source map assim que um arquivo JS é aberto.
   useEffect(() => {
@@ -791,6 +873,59 @@ export function EditorPanel() {
       </Dialog>
 
       {/* dialog de observar execução */}
+      {/* escopo do mapa: escolher antes de instrumentar */}
+      <Dialog open={mapaOpen} onOpenChange={setMapaOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>O que mapear?</DialogTitle>
+            <DialogDescription>
+              Cada função escolhida ganha um embrulho que conta chamadas e mede tempo. Num bundle
+              grande, instrumentar tudo pesa mais que o código medido — e muda o que você quer
+              observar.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-1.5">
+            <button
+              onClick={() => void confirmarMapa('arquivo')}
+              disabled={(pendingMapa?.totalArquivo ?? 0) > LIMITE_FUNCOES}
+              className="flex w-full flex-col items-start gap-0.5 rounded-md border border-border px-3 py-2 text-left transition-colors hover:bg-secondary/50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <span className="text-xs font-medium">
+                O arquivo inteiro — {(pendingMapa?.totalArquivo ?? 0).toLocaleString('pt-BR')} funções
+              </span>
+              <span className="text-[10px] text-muted-foreground">
+                {(pendingMapa?.totalArquivo ?? 0) > LIMITE_FUNCOES
+                  ? `Acima do limite de ${LIMITE_FUNCOES.toLocaleString('pt-BR')}: travaria a página. Selecione um trecho.`
+                  : 'Descobre o que executa num bundle que você não conhece, e o que nunca roda.'}
+              </span>
+            </button>
+            {pendingMapa?.selecao ? (
+              <button
+                onClick={() => void confirmarMapa('selecao')}
+                className="flex w-full flex-col items-start gap-0.5 rounded-md border border-sky-500/40 px-3 py-2 text-left transition-colors hover:bg-secondary/50"
+              >
+                <span className="text-xs font-medium text-sky-300">
+                  Só a seleção ({pendingMapa.selecao.label}) —{' '}
+                  {pendingMapa.selecao.total.toLocaleString('pt-BR')} funções
+                </span>
+                <span className="text-[10px] text-muted-foreground">
+                  Custo proporcional ao recorte. Funções cortadas no meio ficam de fora.
+                </span>
+              </button>
+            ) : (
+              <p className="px-1 text-[10px] text-muted-foreground">
+                Selecione um trecho no editor antes de mapear para recortar o escopo.
+              </p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" size="sm" onClick={() => setMapaOpen(false)}>
+              Cancelar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={watchOpen} onOpenChange={setWatchOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>

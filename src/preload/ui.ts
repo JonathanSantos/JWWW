@@ -51,7 +51,10 @@ contextBridge.exposeInMainWorld('api', {
   overrides: {
     list: () => invoke('overrides:list'),
     save: (entry: unknown) => invoke('overrides:save', entry),
-    remove: (id: string) => invoke('overrides:remove', id)
+    remove: (id: string) => invoke('overrides:remove', id),
+    setAllEnabled: (enabled: boolean) => invoke('overrides:setAllEnabled', enabled),
+    copy: (id: string) => invoke('overrides:copy', id),
+    paste: () => invoke('overrides:paste')
   },
   scripts: {
     list: () => invoke('scripts:list'),

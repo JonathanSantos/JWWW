@@ -110,6 +110,8 @@ export type MapCatalogEvent = {
 export type MapCountsEvent = {
   tabId: number
   lote: Array<[string, number, number, number, number, number]>
+  /** ms que o embrulho da instrumentação custa por chamada, medido na página */
+  custoPorChamada?: number | null
 }
 
 export type OverrideStatusEvent = {
@@ -168,6 +170,9 @@ export interface JwwwApi {
     list(): Promise<OverrideEntry[]>
     save(entry: OverrideEntry): Promise<void>
     remove(id: string): Promise<void>
+    setAllEnabled(enabled: boolean): Promise<void>
+    copy(id: string): Promise<{ ok: boolean; error?: string }>
+    paste(): Promise<{ ok: boolean; url?: string; error?: string }>
   }
   scripts: {
     list(): Promise<UserScript[]>

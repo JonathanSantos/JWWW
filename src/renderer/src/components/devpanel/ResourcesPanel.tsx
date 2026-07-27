@@ -30,6 +30,7 @@ export function ResourcesPanel() {
   const entries = useApp((s) => (active ? s.net[active.id] : undefined)) ?? EMPTY
   const [query, setQuery] = useState('')
   const [flat, setFlat] = useState(false)
+  const statusPorUrl = useApp((s) => s.statusPorUrl)
   const { isExpanded, toggle } = useTreeExpansion()
 
   const { firstParty, thirdParty, pageDomain } = useMemo(() => {
@@ -81,6 +82,7 @@ export function ResourcesPanel() {
                 emphasized={emphasized}
                 isExpanded={isExpanded}
                 toggle={toggle}
+                statusPorUrl={statusPorUrl}
               />
             ))}
         </div>
@@ -95,6 +97,7 @@ export function ResourcesPanel() {
         emphasized={emphasized}
         isExpanded={isExpanded}
         toggle={toggle}
+        statusPorUrl={statusPorUrl}
       />
     )
   }

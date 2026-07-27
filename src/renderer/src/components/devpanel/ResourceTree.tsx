@@ -9,14 +9,15 @@ import {
   FileText,
   Folder,
   FolderOpen,
-  Image as ImageIcon
+  Image as ImageIcon,
+  TriangleAlert
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 import { formatBytes, isTextual } from '@/lib/lang'
 import { openResourceInEditor } from '@/lib/editor'
 import type { TreeNode } from '@/lib/tree'
-import type { NetEntry } from '@shared/types'
+import type { NetEntry, OverrideStatus, OverrideStatusEvent } from '@shared/types'
 
 function typeIcon(entry: NetEntry) {
   switch (entry.resourceType) {
@@ -36,20 +37,60 @@ function typeIcon(entry: NetEntry) {
   }
 }
 
+/**
+ * O selo de override na árvore.
+ *
+ * Antes existia um selo só, "override", ligado a a resposta ter sido reescrita.
+ * Quando o patch falhava, o original era servido e o arquivo ficava sem selo
+ * nenhum — o estado mais importante era justamente o invisível. Agora cada
+ * estado tem cor e rótulo próprios, no lugar onde você navega os arquivos.
+ */
+function SeloDeOverride({ status, message }: { status?: OverrideStatus; message?: string }) {
+  if (status === 'fuzzy') {
+    return (
+      <Badge
+        variant="outline"
+        title={message}
+        className="h-4 shrink-0 border-amber-500/50 px-1 text-[9px] text-amber-400"
+      >
+        fuzzy
+      </Badge>
+    )
+  }
+  if (status === 'failed') {
+    return (
+      <Badge
+        variant="outline"
+        title={message}
+        className="h-4 shrink-0 border-red-500/50 px-1 text-[9px] text-red-400"
+      >
+        <TriangleAlert className="mr-0.5 h-2 w-2" /> falhou
+      </Badge>
+    )
+  }
+  return (
+    <Badge variant="outline" className="h-4 shrink-0 border-emerald-500/50 px-1 text-[9px] text-emerald-400">
+      override
+    </Badge>
+  )
+}
+
 type Props = {
   node: TreeNode
   depth: number
   emphasized: boolean
   isExpanded: (id: string) => boolean
   toggle: (id: string) => void
+  statusPorUrl: Record<string, OverrideStatusEvent>
 }
 
-export function ResourceTreeNode({ node, depth, emphasized, isExpanded, toggle }: Props) {
+export function ResourceTreeNode({ node, depth, emphasized, isExpanded, toggle, statusPorUrl }: Props) {
   const indent = { paddingLeft: `${depth * 12 + 6}px` }
 
   if (node.entry) {
     const entry = node.entry
     const clickable = isTextual(entry)
+    const st = statusPorUrl[entry.url]
     return (
       <div
         style={indent}
@@ -63,11 +104,7 @@ export function ResourceTreeNode({ node, depth, emphasized, isExpanded, toggle }
       >
         {typeIcon(entry)}
         <span className={cn('min-w-0 flex-1 truncate font-mono', emphasized && 'font-medium')}>{node.name}</span>
-        {entry.overridden && (
-          <Badge variant="outline" className="h-4 shrink-0 border-amber-500/50 px-1 text-[9px] text-amber-400">
-            override
-          </Badge>
-        )}
+        {(entry.overridden || st) && <SeloDeOverride status={st?.status} message={st?.message} />}
         {entry.blocked && (
           <Badge variant="outline" className="h-4 shrink-0 border-red-500/50 px-1 text-[9px] text-red-400">
             <Ban className="mr-0.5 h-2 w-2" /> bloq.
@@ -113,6 +150,7 @@ export function ResourceTreeNode({ node, depth, emphasized, isExpanded, toggle }
             emphasized={emphasized}
             isExpanded={isExpanded}
             toggle={toggle}
+            statusPorUrl={statusPorUrl}
           />
         ))}
     </div>

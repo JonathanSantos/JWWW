@@ -236,7 +236,7 @@ export class OverrideEngine {
        * arquivo mudar no servidor, o id muda junto — que é o desejado.
        */
       const fileId = sha256(`${url}\n${text}`).slice(0, 8)
-      const r = applyExecutionMap(text, fileId)
+      const r = applyExecutionMap(text, fileId, o.mapRange)
       text = r.text
       if (r.status === 'applied') catalog = { fileId, functions: r.catalog }
       results.push({

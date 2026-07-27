@@ -44,6 +44,21 @@ export const OverrideEntrySchema = z.object({
       stack: z.boolean().default(false)
     })
     .optional(),
+  /**
+   * kind === 'map': limita a instrumentação a um trecho do arquivo.
+   *
+   * Ausente significa arquivo inteiro. Num bundle grande instrumentar tudo pesa
+   * mais que o código medido e muda o comportamento que se quer observar — o
+   * recorte é o que torna o mapa usável fora de arquivo pequeno.
+   */
+  mapRange: z
+    .object({
+      from: z.number().int().nonnegative(),
+      to: z.number().int().nonnegative(),
+      /** o que o dev escolheu, para a UI conseguir explicar depois */
+      label: z.string()
+    })
+    .optional(),
   updatedAt: z.number()
 })
 export type OverrideEntry = z.infer<typeof OverrideEntrySchema>

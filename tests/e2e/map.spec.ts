@@ -40,6 +40,12 @@ test.afterEach(async () => {
   await site?.stop()
 })
 
+/** Mapear agora pergunta o escopo antes de instrumentar. */
+async function mapearArquivoInteiro(jwww: JwwwApp) {
+  await jwww.ui.getByRole('button', { name: 'Mapear' }).click()
+  await jwww.ui.getByRole('button', { name: /O arquivo inteiro/ }).click()
+}
+
 async function abrirArquivo(jwww: JwwwApp, url: string) {
   await jwww.openPanel('Recursos')
   const item = jwww.ui.locator(`[title="${url}"]`)
@@ -53,7 +59,7 @@ test('mapeia o arquivo e mostra o que executou, com o que nunca rodou de fora', 
   app = await launchApp({ startUrl: site.url('/') })
   await abrirArquivo(app, site.url('/app.js'))
 
-  await app.ui.getByRole('button', { name: 'Mapear' }).click()
+  await mapearArquivoInteiro(app)
   await expect
     .poll(() => app!.readStore<OverrideEntry>('overrides').filter((o) => o.kind === 'map').length, {
       timeout: 15_000
@@ -77,7 +83,7 @@ test('zerar e interagir isola o que aquela ação disparou', async () => {
   site = await new FixtureSite().set('/', INDEX).js('/app.js', APP_JS).start()
   app = await launchApp({ startUrl: site.url('/') })
   await abrirArquivo(app, site.url('/app.js'))
-  await app.ui.getByRole('button', { name: 'Mapear' }).click()
+  await mapearArquivoInteiro(app)
   await expect
     .poll(() => app!.readStore<OverrideEntry>('overrides').filter((o) => o.kind === 'map').length, {
       timeout: 15_000
@@ -134,7 +140,7 @@ window.addEventListener("DOMContentLoaded", () => {
 
   app = await launchApp({ startUrl: site.url('/') })
   await abrirArquivo(app, site.url('/app.js'))
-  await app.ui.getByRole('button', { name: 'Mapear' }).click()
+  await mapearArquivoInteiro(app)
   await expect
     .poll(() => app!.readStore<OverrideEntry>('overrides').filter((o) => o.kind === 'map').length, {
       timeout: 15_000
@@ -154,7 +160,7 @@ test('desligar o mapeamento remove a instrumentação', async () => {
   app = await launchApp({ startUrl: site.url('/') })
   await abrirArquivo(app, site.url('/app.js'))
 
-  await app.ui.getByRole('button', { name: 'Mapear' }).click()
+  await mapearArquivoInteiro(app)
   await expect(app.ui.getByRole('button', { name: 'Mapeando' })).toBeVisible({ timeout: 15_000 })
 
   await app.ui.getByRole('button', { name: 'Mapeando' }).click()
@@ -191,7 +197,7 @@ test('separa tempo próprio de tempo total', async () => {
   app = await launchApp({ startUrl: site.url('/') })
   await abrirArquivo(app, site.url('/app.js'))
 
-  await app.ui.getByRole('button', { name: 'Mapear' }).click()
+  await mapearArquivoInteiro(app)
   await expect
     .poll(() => app!.readStore<OverrideEntry>('overrides').filter((o) => o.kind === 'map').length, {
       timeout: 15_000
@@ -218,4 +224,73 @@ test('separa tempo próprio de tempo total', async () => {
     'por tempo total, externa vem antes de interna'
   ).toBeLessThan(ordemTotal.findIndex((t) => t.includes('interna')))
 
+})
+
+test('dá para mapear só o trecho selecionado, e o painel diz que é um recorte', async () => {
+  site = await new FixtureSite().set('/', INDEX).js('/app.js', APP_JS).start()
+  app = await launchApp({ startUrl: site.url('/') })
+  await abrirArquivo(app, site.url('/app.js'))
+
+  // seleciona da linha de `somaInterna` até o fim de `nuncaChamada`
+  const editor = app.ui.locator('.monaco-editor').first()
+  await editor.click()
+  const linhaAlvo = app.ui.locator('.view-line', { hasText: 'function somaInterna' }).first()
+  await linhaAlvo.click()
+  await app.ui.keyboard.press('Home')
+  for (let i = 0; i < 6; i++) await app.ui.keyboard.press('Shift+ArrowDown')
+
+  await app.ui.getByRole('button', { name: 'Mapear' }).click()
+  const opcaoRecorte = app.ui.getByRole('button', { name: /Só a seleção/ })
+  await expect(opcaoRecorte).toBeVisible({ timeout: 15_000 })
+  await opcaoRecorte.click()
+
+  await expect
+    .poll(() => app!.readStore<OverrideEntry>('overrides').find((o) => o.kind === 'map')?.mapRange, {
+      timeout: 15_000
+    })
+    .toBeTruthy()
+
+  await app.reloadPage()
+  await app.openPanel('Mapa')
+  await expect(app.ui.getByText(/recorte: linhas/)).toBeVisible({ timeout: 25_000 })
+
+  // dispara o clique: `somaInterna` está dentro do recorte e passa a contar
+  await app.pageEval('document.getElementById("b").click()')
+  await expect(app.ui.getByText('somaInterna')).toBeVisible({ timeout: 20_000 })
+
+  // `usadaNoCarregamento` executou de verdade no load, mas ficou fora do
+  // recorte — é isso que prova que o escopo foi respeitado
+  await expect(app.ui.getByText('usadaNoCarregamento')).toHaveCount(0)
+
+  // e a página continua funcionando normalmente
+  expect(await app.pageEval<string>('document.querySelector("h1").textContent')).toBe('42')
+})
+
+test('mostra quanto a própria instrumentação está custando', async () => {
+  site = await new FixtureSite()
+    .set('/', INDEX)
+    .js(
+      '/app.js',
+      `function trivial(x) { return x + 1 }
+       function laco() { var s = 0; for (var i = 0; i < 20000; i++) s = trivial(s); return s }
+       document.addEventListener("DOMContentLoaded", function () {
+         document.body.setAttribute("data-r", String(laco()));
+       });`
+    )
+    .start()
+  app = await launchApp({ startUrl: site.url('/') })
+  await abrirArquivo(app, site.url('/app.js'))
+  await mapearArquivoInteiro(app)
+  await expect
+    .poll(() => app!.readStore<OverrideEntry>('overrides').filter((o) => o.kind === 'map').length, {
+      timeout: 15_000
+    })
+    .toBe(1)
+  await app.reloadPage()
+  await app.openPanel('Mapa')
+
+  // 20 mil chamadas de uma função trivial: o embrulho domina, e o painel
+  // precisa dizer isso em vez de deixar o dev achar que mediu o site
+  await expect(app.ui.getByText(/a instrumentação custa ~/)).toBeVisible({ timeout: 25_000 })
+  await expect(app.ui.getByText(/Mapeie um trecho menor/)).toBeVisible({ timeout: 20_000 })
 })

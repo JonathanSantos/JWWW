@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Crosshair, FileCode2, Radar } from 'lucide-react'
+import { Crosshair, FileCode2, Gauge, Radar } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -43,6 +43,7 @@ export function MapPanel() {
   const contagens = useApp((s) => s.mapCounts)
   const limpar = useApp((s) => s.clearMapCounts)
   const overrides = useApp((s) => s.overrides)
+  const custoPorChamada = useApp((s) => s.custoPorChamada)
 
   const fileIds = Object.keys(catalogos)
   const [fileIdAtivo, setFileIdAtivo] = useState<string | null>(null)
@@ -68,9 +69,17 @@ export function MapPanel() {
     }
   }, [catalogo?.url, catalogo?.sourceMappingUrl])
 
-  const { linhas, totalFiltradas, totalExecutadas, maiorChamadas } = useMemo(() => {
+  const { linhas, totalFiltradas, totalExecutadas, maiorChamadas, totalChamadas, tempoMedido } =
+    useMemo(() => {
     if (!catalogo || !fileId) {
-      return { linhas: [] as Linha[], totalFiltradas: 0, totalExecutadas: 0, maiorChamadas: 0 }
+      return {
+        linhas: [] as Linha[],
+        totalFiltradas: 0,
+        totalExecutadas: 0,
+        maiorChamadas: 0,
+        totalChamadas: 0,
+        tempoMedido: 0
+      }
     }
     const cont = contagens[fileId] ?? {}
 
@@ -100,7 +109,12 @@ export function MapPanel() {
 
     const ordenadas = [...filtradas].sort((a, b) => {
       if (ordenacao === 'proprio') return b.proprio - a.proprio || b.calls - a.calls
-      if (ordenacao === 'total') return b.total - a.total || b.calls - a.calls
+      // Uma função que só chama outra tem praticamente o mesmo tempo total que
+      // a chamada, e as duas empatam — o relógio da página é quantizado em
+      // ~100µs. No empate vale a de fora, que é a raiz mais útil para começar a
+      // ler. Ela é a de `ordem` maior: a ordem é registrada quando a chamada
+      // termina, e quem engloba termina por último.
+      if (ordenacao === 'total') return b.total - a.total || b.ordem - a.ordem
       if (ordenacao === 'primeira') return a.ordem - b.ordem
       return b.calls - a.calls || b.proprio - a.proprio
     })
@@ -111,7 +125,11 @@ export function MapPanel() {
       linhas: ordenadas.slice(0, LIMITE_VISIVEL),
       totalFiltradas: ordenadas.length,
       totalExecutadas: executadas.length,
-      maiorChamadas: executadas.reduce((max, l) => Math.max(max, l.calls), 0)
+      maiorChamadas: executadas.reduce((max, l) => Math.max(max, l.calls), 0),
+      totalChamadas: executadas.reduce((soma, l) => soma + l.calls, 0),
+      // soma dos tempos próprios: o tempo de fato medido, sem contar duas vezes
+      // o que uma função gastou dentro de outra
+      tempoMedido: executadas.reduce((soma, l) => soma + l.proprio, 0)
     }
   }, [catalogo, contagens, fileId, filtro, ordenacao, mostrarNaoExecutadas, sourceMap])
 
@@ -143,6 +161,13 @@ export function MapPanel() {
     ? Math.round((totalExecutadas / catalogo.functions.length) * 100)
     : 0
 
+  const custoDaInstrumentacao = (custoPorChamada ?? 0) * totalChamadas
+  // Quanto do que você está lendo é a régua, e não o código medido.
+  const pesoDaInstrumentacao =
+    tempoMedido > 0 ? custoDaInstrumentacao / (tempoMedido + custoDaInstrumentacao) : 0
+
+  const mapOverride = overrides.find((o) => o.kind === 'map' && o.url === url)
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="shrink-0 space-y-2 border-b border-border p-2">
@@ -173,6 +198,15 @@ export function MapPanel() {
           <Badge variant="outline" className="h-4 border-emerald-500/50 px-1.5 text-[9px] text-emerald-400">
             {percentual}%
           </Badge>
+          {mapOverride?.mapRange && (
+            <Badge
+              variant="outline"
+              className="h-4 border-violet-500/50 px-1.5 text-[9px] text-violet-400"
+              title="A instrumentação foi limitada a este trecho do arquivo"
+            >
+              recorte: {mapOverride.mapRange.label}
+            </Badge>
+          )}
           {sourceMap && (
             <Badge variant="outline" className="h-4 border-sky-500/50 px-1.5 text-[9px] text-sky-400">
               nomes originais
@@ -200,6 +234,31 @@ export function MapPanel() {
             ))}
           </select>
         </div>
+
+        {/*
+          O custo da régua, medido nesta página. Sem ele os tempos aparecem sem
+          dizer quanto deles é a instrumentação, e o dev não sabe se está
+          olhando o código do site ou o nosso embrulho.
+        */}
+        {custoPorChamada !== null && totalChamadas > 0 && (
+          <div
+            className={cn(
+              'flex items-start gap-1.5 rounded-md px-2 py-1 text-[10px] leading-snug',
+              pesoDaInstrumentacao > 0.25
+                ? 'bg-amber-500/10 text-amber-300'
+                : 'text-muted-foreground'
+            )}
+          >
+            <Gauge className="mt-[1px] h-3 w-3 shrink-0" />
+            <span>
+              a instrumentação custa ~{formatarMs(custoPorChamada)} por chamada e já somou ~
+              {formatarMs(custoDaInstrumentacao)} nas {totalChamadas.toLocaleString('pt-BR')}{' '}
+              chamadas contadas
+              {tempoMedido > 0 && ` — ${Math.round(pesoDaInstrumentacao * 100)}% do tempo medido`}
+              {pesoDaInstrumentacao > 0.25 && '. Mapeie um trecho menor para os números valerem.'}
+            </span>
+          </div>
+        )}
 
         {/* o fluxo mais útil do painel */}
         <div className="flex items-center gap-1.5">

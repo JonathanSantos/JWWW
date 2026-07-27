@@ -46,6 +46,31 @@ export async function openResourceInEditor(entry: NetEntry) {
   store.setPanelTab('editor')
 }
 
+/**
+ * Abre um arquivo a partir da URL e pula para a linha — é o que o console tem
+ * em mãos quando você clica na origem de uma mensagem.
+ */
+export async function openUrlAtLine(tabId: number, url: string, linha?: number) {
+  const limpa = url.split('#')[0]
+  const store = useApp.getState()
+
+  if (store.files.some((f) => f.url === limpa)) {
+    store.setActiveFile(limpa)
+    store.setPanelTab('editor')
+  } else {
+    const entry = (store.net[tabId] ?? []).find((e) => e.url === limpa)
+    if (!entry) {
+      toast.error('Esse arquivo não está entre os recursos desta aba', { description: limpa })
+      return
+    }
+    await openResourceInEditor(entry)
+    // openResourceInEditor desiste em silêncio quando não consegue o corpo.
+    if (!useApp.getState().files.some((f) => f.url === limpa)) return
+  }
+
+  if (linha) useApp.getState().pedirRevelar(limpa, linha)
+}
+
 export function openOverrideInEditor(override: OverrideEntry) {
   const store = useApp.getState()
   const activeTab = store.tabs.find((t) => t.active)
