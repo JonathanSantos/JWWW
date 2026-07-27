@@ -304,17 +304,74 @@ Painel **Rede**: log completo por aba, bloqueio por padrão (`*analytics*` ou su
 (Fast/Slow 3G, offline), tamanhos e tempos. Cache HTTP e service workers são bypassados enquanto o
 console está ativo (como o "Disable cache" do DevTools) para a interceptação ser confiável.
 
+## Empacotando
+
+```bash
+npm run dist        # instalador da plataforma atual, em dist/
+npm run dist:dir    # só o app desempacotado — rápido, para conferir o pacote
+npm run dist:mac    # .dmg + .zip universais (arm64 + x64)
+npm run dist:win    # instalador NSIS
+npm run dist:linux  # AppImage + .deb
+```
+
+O empacotamento é do **electron-builder** (`electron-builder.yml`). Cada alvo só é
+gerado no seu próprio sistema — macOS exige um Mac, e o `.dmg` não sai do Linux.
+
+**O que entra no pacote.** Só `out/`, o `package.json` e as dependências de
+produção. Isso é o motivo de `monaco-editor`, `react` e companhia estarem em
+`devDependencies`: o Vite já embute tudo isso no renderer, e mantê-las em
+`dependencies` colocaria ~100 MB de fonte morto dentro do asar. Em `dependencies`
+fica só o que main e preload importam em runtime — `acorn`, `diff-match-patch` e
+`zod` —, que o electron-vite mantém externos de propósito.
+
+**Ícone.** A fonte é `build/icon.svg`. `npm run icon` rasteriza para
+`build/icon.png` (1024×1024) usando o próprio Electron, e o electron-builder
+converte para `.icns` e `.ico` sozinho.
+
+**Assinatura no macOS.** Empacotar troca o conteúdo do bundle e invalida a
+assinatura que veio do Electron; sem reassinar, o app é recusado em máquinas
+Apple Silicon. O hook `scripts/after-pack.cjs` aplica uma assinatura **ad-hoc**,
+que basta para rodar na sua máquina. Para distribuir de verdade ainda é preciso
+Developer ID e notarização: exporte `CSC_LINK` e `CSC_KEY_PASSWORD` (o hook sai
+de cena sozinho), preencha `APPLE_ID`/`APPLE_APP_SPECIFIC_PASSWORD`/`APPLE_TEAM_ID`
+e troque `notarize: false` no `electron-builder.yml`. Sem isso, quem baixar o
+`.dmg` precisa liberar a quarentena:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/JWWW.app
+```
+
+> O `productName` é `JWWW` também em desenvolvimento, então o app empacotado e o
+> `npm run dev` **compartilham** os mesmos overrides, scripts e sessões.
+
 ## Testes
 
-`npm run test:e2e` sobe o app empacotado com o Playwright (`_electron`) e exercita
-os fluxos de verdade: abrir arquivo pela árvore, formatar, editar, salvar, expor
-global, diff, sessões. As páginas de teste vêm de um servidor HTTP em memória
+`npm run test:e2e` sobe o app com o Playwright (`_electron`) e exercita os fluxos
+de verdade: abrir arquivo pela árvore, formatar, editar, salvar, expor global,
+diff, sessões. As páginas de teste vêm de um servidor HTTP em memória
 (`tests/e2e/helpers/server.ts`) cujos arquivos são mutáveis, o que permite
 simular um deploy no meio do teste.
 
 Cada teste roda com `userData` próprio num diretório temporário. Isso mantém os
 seus overrides reais intocados e, de quebra, faz o lock de instância única (que
 é por `userData`) não brigar com um JWWW aberto na máquina.
+
+`tests/e2e/pacote.spec.ts` é a exceção: ele dirige o **binário empacotado**, e é
+o único que passa pelo asar e pelos caminhos relativos que só existem dentro do
+bundle — que é onde empacotamento costuma quebrar (preload não encontrado,
+`index.html` fora do asar, dependência que ficou de fora). Ele se pula sozinho
+quando não há nada em `dist/`:
+
+```bash
+npm run dist:dir && npx playwright test pacote
+```
+
+`JWWW_PACKAGED_BINARY` aponta o teste para um build específico — o universal, um
+`.app` já instalado ou um DMG montado:
+
+```bash
+JWWW_PACKAGED_BINARY="/Volumes/JWWW 0.1.0-universal/JWWW.app/Contents/MacOS/JWWW" npx playwright test pacote
+```
 
 ## O que já foi verificado rodando
 
@@ -349,6 +406,9 @@ seus overrides reais intocados e, de quebra, faz o lock de instância única (qu
   (sem override aplicado).
 - Sessão salva, overrides apagados, sessão restaurada — glob e conteúdo editado
   preservados.
+- Pacote: o `.app` gerado sobe, carrega o renderer de dentro do asar, aplica
+  override no primeiro load, injeta o preload da página e avalia expressão pelo
+  console — com a assinatura ad-hoc passando no `codesign --verify --deep`.
 
 ## Limitações conhecidas (roadmap)
 

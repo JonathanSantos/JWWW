@@ -1,6 +1,6 @@
 import { _electron as electron, type ElectronApplication, type Page } from '@playwright/test'
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { NetRule, OverrideEntry, UserScript, Workspace } from '../../../src/shared/schemas'
@@ -15,6 +15,8 @@ export type Seed = {
 export type LaunchOptions = {
   startUrl?: string
   seed?: Seed
+  /** Binário já empacotado. Sem isto roda o `out/` direto, como em dev. */
+  executablePath?: string
 }
 
 export class JwwwApp {
@@ -125,8 +127,12 @@ export async function launchApp(opts: LaunchOptions = {}): Promise<JwwwApp> {
     writeFileSync(join(dataDir, `${name}.json`), JSON.stringify(items, null, 2))
   }
 
+  // No app empacotado o entrypoint já está dentro do asar: passar '.' faria o
+  // Electron tentar abrir o diretório de trabalho como app.
   const electronApp = await electron.launch({
-    args: ['.', `--user-data-dir=${userDataDir}`],
+    ...(opts.executablePath
+      ? { executablePath: opts.executablePath, args: [`--user-data-dir=${userDataDir}`] }
+      : { args: ['.', `--user-data-dir=${userDataDir}`] }),
     env: {
       ...process.env,
       NODE_ENV: 'test',
@@ -141,6 +147,28 @@ export async function launchApp(opts: LaunchOptions = {}): Promise<JwwwApp> {
   const jwww = new JwwwApp(electronApp, ui, userDataDir)
   if (opts.startUrl) await jwww.waitForPage()
   return jwww
+}
+
+/**
+ * Binário do app empacotado, se `npm run dist:dir` já rodou. Devolve null
+ * quando não existe — assim a suíte normal não depende de ter empacotado.
+ */
+export function packagedBinary(): string | null {
+  // Aponta para um build específico (o universal, um .app já instalado, um DMG
+  // montado) sem depender do que sobrou em dist/.
+  const escolhido = process.env['JWWW_PACKAGED_BINARY']
+  if (escolhido) return existsSync(escolhido) ? escolhido : null
+
+  const raiz = join(__dirname, '..', '..', '..', 'dist')
+  const candidatos =
+    process.platform === 'darwin'
+      ? ['mac-arm64', 'mac-universal', 'mac', 'mac-x64'].map((d) =>
+          join(raiz, d, 'JWWW.app', 'Contents', 'MacOS', 'JWWW')
+        )
+      : process.platform === 'win32'
+        ? [join(raiz, 'win-unpacked', 'JWWW.exe')]
+        : [join(raiz, 'linux-unpacked', 'jwww')]
+  return candidatos.find((c) => existsSync(c)) ?? null
 }
 
 export function sha256(text: string): string {

@@ -1,0 +1,57 @@
+appId: dev.jwww.browser
+productName: JWWW
+copyright: Copyright © 2026 Jonathan Reis dos Santos
+
+directories:
+  buildResources: build
+  output: dist
+
+afterPack: scripts/after-pack.cjs
+
+# Lista explícita: sem ela o padrão copia `src/`, `tests/` e configs para dentro
+# do asar. Só entra o que o app precisa para rodar.
+#
+# `node_modules/**` não é o node_modules inteiro: o electron-builder resolve a
+# árvore de produção e ignora devDependencies. Por isso `monaco-editor`, `react`
+# e companhia estão em devDependencies — o Vite já os embute no renderer, e
+# deixá-los em `dependencies` colocaria ~100 MB de fonte morto no pacote.
+# Em `dependencies` fica só o que main/preload importam em tempo de execução
+# (acorn, diff-match-patch, zod), que o electron-vite mantém externo.
+files:
+  - out/**
+  - node_modules/**
+  - package.json
+
+asar: true
+
+mac:
+  category: public.app-category.developer-tools
+  icon: build/icon.png
+  darkModeSupport: true
+  # Sem conta de desenvolvedor Apple configurada. Ver README para assinar.
+  notarize: false
+  target:
+    - dmg
+    - zip
+
+dmg:
+  artifactName: ${productName}-${version}-${arch}.${ext}
+
+win:
+  icon: build/icon.png
+  target:
+    - nsis
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  artifactName: ${productName}-${version}-instalador.${ext}
+
+linux:
+  icon: build/icon.png
+  category: Development
+  synopsis: Navegador para devs
+  target:
+    - AppImage
+    - deb
