@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "description": "JWWW — um navegador para devs: overrides resilientes, expose-to-global, bus entre abas e userscripts",
   "author": "Jonathan Reis dos Santos <brjs.santos@gmail.com>",
+  "license": "MIT",
   "main": "out/main/index.js",
   "private": true,
   "scripts": {
