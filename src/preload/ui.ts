@@ -29,6 +29,7 @@ contextBridge.exposeInMainWorld('api', {
     back: (id: number) => invoke('tabs:back', id),
     forward: (id: number) => invoke('tabs:forward', id),
     setViewport: (rect: unknown) => invoke('tabs:viewport', rect),
+    setPageVisible: (v: boolean) => invoke('tabs:pageVisible', v),
     openDevTools: (id: number) => invoke('tabs:devtools', id)
   },
   net: {

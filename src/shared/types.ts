@@ -108,6 +108,8 @@ export interface JwwwApi {
     back(id: number): Promise<void>
     forward(id: number): Promise<void>
     setViewport(rect: Viewport): Promise<void>
+    /** esconde a página para diálogos da UI não ficarem atrás dela */
+    setPageVisible(visible: boolean): Promise<void>
     openDevTools(id: number): Promise<void>
   }
   net: {

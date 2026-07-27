@@ -5,10 +5,35 @@ import { Dialog as DialogPrimitive } from "radix-ui"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 
+/**
+ * A página é um WebContentsView nativo composto por cima desta janela, então
+ * um diálogo centralizado fica escondido atrás dela. Enquanto houver qualquer
+ * diálogo aberto, escondemos a página.
+ *
+ * O contador existe porque dois diálogos podem coexistir: só o último a fechar
+ * devolve a página.
+ */
+let dialogosAbertos = 0
+
+function ajustarPagina(delta: number) {
+  const antes = dialogosAbertos
+  dialogosAbertos = Math.max(0, dialogosAbertos + delta)
+  if (antes === 0 && dialogosAbertos > 0) void window.api?.tabs.setPageVisible(false)
+  else if (antes > 0 && dialogosAbertos === 0) void window.api?.tabs.setPageVisible(true)
+}
+
 function Dialog({
+  open,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Root>) {
-  return <DialogPrimitive.Root data-slot="dialog" {...props} />
+  React.useEffect(() => {
+    if (!open) return
+    ajustarPagina(1)
+    // também roda se o componente sumir com o diálogo aberto
+    return () => ajustarPagina(-1)
+  }, [open])
+
+  return <DialogPrimitive.Root data-slot="dialog" open={open} {...props} />
 }
 
 function DialogTrigger({

@@ -26,6 +26,7 @@ export class TabManager {
   private tabOrder: number[] = []
   activeId: number | null = null
   private viewport: Viewport = { x: 0, y: 0, width: 0, height: 0 }
+  private paginaVisivel = true
 
   constructor(
     private win: BrowserWindow,
@@ -129,11 +130,24 @@ export class TabManager {
     return id
   }
 
+  /**
+   * A página é um WebContentsView nativo composto **por cima** da janela, então
+   * qualquer diálogo da UI que cruze a área dela some atrás. Enquanto um modal
+   * está aberto, escondemos a página.
+   */
+  setPageVisible(visivel: boolean) {
+    this.paginaVisivel = visivel
+    for (const t of this.allTabs()) {
+      t.view.setVisible(visivel && t.id === this.activeId)
+    }
+    if (visivel) this.applyViewport()
+  }
+
   activate(id: number) {
     if (!this.tabs.has(id)) return
     this.activeId = id
     for (const t of this.allTabs()) {
-      t.view.setVisible(t.id === id)
+      t.view.setVisible(this.paginaVisivel && t.id === id)
     }
     this.applyViewport()
     this.tabs.get(id)!.view.webContents.focus()

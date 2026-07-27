@@ -27,6 +27,11 @@ Variáveis úteis: `JWWW_START_URL` define a página da primeira aba;
 
 - **Electron + electron-vite** — abas são `WebContentsView` gerenciadas pelo main process; a UI do
   browser (barra, abas, painel dev) é React + TypeScript + Tailwind v4 + shadcn/ui.
+
+  > A página é um view **nativo, composto por cima** da janela da UI: qualquer
+  > elemento do renderer que cruze a área dela some atrás. Por isso a página é
+  > escondida enquanto há diálogo aberto — o tratamento vive no componente
+  > `Dialog`, para nenhum diálogo novo reintroduzir o problema.
 - **CDP** (`webContents.debugger`) por aba — captura de rede (`Network.*`), interceptação e reescrita
   de respostas (`Fetch.requestPaused` → `fulfillRequest`), injeção de userscripts
   (`Page.addScriptToEvaluateOnNewDocument`), throttling, bloqueio.

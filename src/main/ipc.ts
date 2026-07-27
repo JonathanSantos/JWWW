@@ -69,6 +69,7 @@ export function registerIpc(ctx: IpcContext) {
   handleUi('tabs:forward', (id: unknown) => ctx.tabs.forward(z.number().parse(id)))
   handleUi('tabs:devtools', (id: unknown) => ctx.tabs.openDevTools(z.number().parse(id)))
   handleUi('tabs:viewport', (rect: unknown) => ctx.tabs.setViewport(ViewportSchema.parse(rect) as Viewport))
+  handleUi('tabs:pageVisible', (v: unknown) => ctx.tabs.setPageVisible(z.boolean().parse(v)))
 
   // --- rede ---
   handleUi('net:getBody', async (payload: unknown) => {
