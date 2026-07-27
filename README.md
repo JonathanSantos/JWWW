@@ -103,9 +103,10 @@ de origem.
 `*` casa qualquer sequência e o padrão precisa casar a URL inteira — não é
 substring, justamente para um glob descuidado não pegar arquivo de outro host.
 
-### Diff lado a lado
+### Diff
 
-Botão **Diff** no editor, com dois modos:
+Botão **Diff** no editor, renderizado inline (o painel dev é estreito demais
+para duas colunas de código), com dois modos:
 
 - **original × suas mudanças** — o que você alterou sobre o arquivo do servidor.
 - **original × servidor agora** — o que o *site* mudou desde que você criou o
@@ -155,7 +156,7 @@ console está ativo (como o "Disable cache" do DevTools) para a interceptação 
 - Árvore de recursos com pastas aninhadas e colapso de pasta única (`js/vendor`).
 - Glob: override criado em `app.a3f9b1.js` continuou valendo em `app.ff0099.js`
   depois de um "deploy" que trocou nome **e** conteúdo do bundle.
-- Diff lado a lado nos dois modos, com o modo servidor buscando o corpo real
+- Diff nos dois modos, com o modo servidor buscando o corpo real do site
   (sem override aplicado).
 - Sessão salva, overrides apagados, sessão restaurada — glob e conteúdo editado
   preservados.

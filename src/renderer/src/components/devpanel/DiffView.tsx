@@ -66,10 +66,9 @@ export function DiffView({ file, mode, currentText, pretty }: Props) {
     const editor = monaco.editor.createDiffEditor(hostRef.current, {
       theme: 'vs-dark',
       readOnly: true,
-      renderSideBySide: true,
-      // Sem isso o Monaco cai sozinho para o modo inline quando o painel está
-      // estreito, que é o caso normal aqui.
-      useInlineViewWhenSpaceIsLimited: false,
+      // Inline: o painel dev é estreito e duas colunas deixariam ~290px para
+      // cada lado, o que não serve para ler código.
+      renderSideBySide: false,
       minimap: { enabled: false },
       fontSize: 12,
       scrollBeyondLastLine: false,
