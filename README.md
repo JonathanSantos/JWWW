@@ -57,6 +57,37 @@ textual (com contexto antes/depois). No próximo reload o arquivo é patchado em
 - O arquivo transformado é validado com acorn; se a sintaxe quebrasse, reverte e avisa.
 - Âncora não encontrada (site mudou) → serve original e avisa.
 
+### Mapa de execução: "o que roda nesta página?"
+
+Botão **Mapear** no editor. Todas as funções do arquivo passam a ser contadas, e
+o painel **Mapa** responde a pergunta que trava qualquer um diante de um bundle
+minificado de 3 MB: *o que aqui dentro realmente importa?*
+
+O topo do painel dá o número que interessa — "127 de 1.243 funções executaram
+(10%)" —, e a lista vem ranqueada com barra proporcional, para dar pra ler no
+olho sem comparar números. Dá para ordenar por chamadas, por tempo ou por ordem
+de execução, e marcar "incluir as que nunca rodaram" para ver o código morto.
+
+**O fluxo que vale a pena:** clique em *Zerar contadores*, interaja com o site,
+e o painel mostra só o que aquela ação disparou. É como achar o código de um
+botão em segundos, sem caçar handler no meio do bundle.
+
+Com source map, os nomes minificados são resolvidos: em vez de `o` e `n`, você
+lê `calcularDesconto` e `precos.ts:7`.
+
+Detalhes de implementação que importam:
+
+- A instrumentação é **só por inserção**, nunca substituindo intervalos. É o que
+  permite instrumentar milhares de funções aninhadas de uma vez: pontos de
+  inserção não se invalidam entre si, intervalos sim.
+- O runtime **agrega na página** e envia em lotes de 400 ms. Uma função dentro
+  de um laço geraria dezenas de milhares de mensagens por segundo.
+- O embrulho preserva `new` (via `Reflect.construct`), `prototype`, `name` e as
+  exceções — instrumentar não pode mudar o comportamento do site.
+- Métodos de classe e atalhos de objeto (`foo() {}`) ficam de fora: o intervalo
+  do nó cobre só `(){...}` e embrulhar geraria sintaxe inválida.
+- Acima de 6.000 funções o JWWW recusa: o embrulho pesaria mais que o insight.
+
 ### Observar execução
 
 Selecione uma função ou expressão no editor e use **Observar**. A cada execução,
@@ -224,6 +255,9 @@ seus overrides reais intocados e, de quebra, faz o lock de instância única (qu
 - Source map: com um bundle real gerado pelo esbuild, selecionar a função no
   TypeScript criou um override ancorado no **bundle** (não no fonte) e a
   instrumentação funcionou em runtime.
+- Mapa de execução: zerar os contadores e clicar num botão do site mostrou só as
+  funções daquela interação, com a contagem certa do laço; e o código morto
+  ficou de fora. O valor calculado pela página continuou o mesmo.
 - Glob: override criado em `app.a3f9b1.js` continuou valendo em `app.ff0099.js`
   depois de um "deploy" que trocou nome **e** conteúdo do bundle.
 - Diff nos dois modos, com o modo servidor buscando o corpo real do site

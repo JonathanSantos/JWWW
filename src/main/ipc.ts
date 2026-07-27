@@ -281,6 +281,17 @@ export function registerIpc(ctx: IpcContext) {
     uiSend('watch:event', { ...parsed.data, tabId: e.sender.id })
   })
 
+  const MapCountsSchema = z.object({
+    lote: z.array(z.tuple([z.string().max(64), z.number(), z.number(), z.number()])).max(20_000)
+  })
+
+  ipcMain.on('jwww:map', (e, payload: unknown) => {
+    if (!ctx.tabs.isPageWebContents(e.sender)) return
+    const parsed = MapCountsSchema.safeParse(payload)
+    if (!parsed.success) return
+    uiSend('map:counts', { ...parsed.data, tabId: e.sender.id })
+  })
+
   // Páginas emitem pelo preload delas (fire-and-forget).
   ipcMain.on('jwww:bus:emit', (e, payload: unknown) => {
     if (!ctx.tabs.isPageWebContents(e.sender)) return

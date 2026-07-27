@@ -1,5 +1,13 @@
 import { create } from 'zustand'
-import type { BusMessage, NetEntry, OverrideStatusEvent, TabState, WatchEvent } from '@shared/types'
+import type {
+  BusMessage,
+  MapCatalogEvent,
+  MapCountsEvent,
+  NetEntry,
+  OverrideStatusEvent,
+  TabState,
+  WatchEvent
+} from '@shared/types'
 import type { NetRule, OverrideEntry, UserScript, Workspace } from '@shared/schemas'
 
 import type { PrettyAnchor } from '@/lib/prettify'
@@ -40,6 +48,10 @@ type AppState = {
   statuses: OverrideStatusEvent[]
   busLog: BusMessage[]
   watchLog: WatchEvent[]
+  /** catálogo de funções instrumentadas, por fileId (uma instrumentação) */
+  mapCatalogs: Record<string, MapCatalogEvent>
+  /** contagens: fileId -> id da função -> { chamadas, ms, ordem de primeira execução } */
+  mapCounts: Record<string, Record<number, { calls: number; ms: number; ordem: number }>>
   files: EditorFile[]
   activeFileUrl: string | null
 
@@ -57,6 +69,10 @@ type AppState = {
   setBusLog: (m: BusMessage[]) => void
   pushWatch: (e: WatchEvent) => void
   clearWatchLog: () => void
+  setMapCatalog: (ev: MapCatalogEvent) => void
+  addMapCounts: (ev: MapCountsEvent) => void
+  clearMapCounts: (fileId: string) => void
+  clearMapCountsForTab: (tabId: number) => void
   openFile: (f: EditorFile) => void
   closeFile: (url: string) => void
   setActiveFile: (url: string) => void
@@ -80,6 +96,8 @@ export const useApp = create<AppState>((set) => ({
   statuses: [],
   busLog: [],
   watchLog: [],
+  mapCatalogs: {},
+  mapCounts: {},
   files: [],
   activeFileUrl: null,
 
@@ -122,6 +140,53 @@ export const useApp = create<AppState>((set) => ({
   // Uma função em loop pode disparar muito evento; o log é limitado.
   pushWatch: (e) => set((s) => ({ watchLog: [...s.watchLog.slice(-499), e] })),
   clearWatchLog: () => set({ watchLog: [] }),
+
+  /**
+   * O fileId vem do conteúdo do arquivo. Se ele já é conhecido, é a mesma
+   * instrumentação sendo reentregue (um `fetch` da página, por exemplo) e as
+   * contagens acumuladas continuam valendo. Se mudou, o arquivo mudou: a
+   * instrumentação anterior daquele URL é descartada.
+   */
+  setMapCatalog: (ev) =>
+    set((s) => {
+      if (s.mapCatalogs[ev.fileId]) return {}
+      const catalogos = Object.fromEntries(
+        Object.entries(s.mapCatalogs).filter(([, c]) => c.url !== ev.url)
+      )
+      const contagens = Object.fromEntries(
+        Object.entries(s.mapCounts).filter(([id]) => catalogos[id] !== undefined)
+      )
+      return {
+        mapCatalogs: { ...catalogos, [ev.fileId]: ev },
+        mapCounts: { ...contagens, [ev.fileId]: {} }
+      }
+    }),
+
+  /** Nova navegação começa a contagem do zero. */
+  clearMapCountsForTab: (tabId) =>
+    set((s) => {
+      const contagens = { ...s.mapCounts }
+      for (const [fileId, catalogo] of Object.entries(s.mapCatalogs)) {
+        if (catalogo.tabId === tabId) contagens[fileId] = {}
+      }
+      return { mapCounts: contagens }
+    }),
+
+  addMapCounts: (ev) =>
+    set((s) => {
+      const porArquivo = { ...s.mapCounts }
+      for (const [fileId, id, calls, ms] of ev.lote) {
+        const atual = { ...(porArquivo[fileId] ?? {}) }
+        const anterior = atual[id]
+        atual[id] = anterior
+          ? { calls: anterior.calls + calls, ms: anterior.ms + ms, ordem: anterior.ordem }
+          : { calls, ms, ordem: Object.keys(atual).length }
+        porArquivo[fileId] = atual
+      }
+      return { mapCounts: porArquivo }
+    }),
+
+  clearMapCounts: (fileId) => set((s) => ({ mapCounts: { ...s.mapCounts, [fileId]: {} } })),
 
   openFile: (f) =>
     set((s) => {

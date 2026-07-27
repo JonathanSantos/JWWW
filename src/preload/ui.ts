@@ -7,6 +7,8 @@ const EVENT_CHANNELS = new Set([
   'override:status',
   'bus:message',
   'watch:event',
+  'map:catalog',
+  'map:counts',
   'overrides:changed',
   'scripts:changed',
   'rules:changed',

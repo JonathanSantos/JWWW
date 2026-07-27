@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "preview": "electron-vite preview",
     "test": "npm run test:unit && npm run test:e2e",
-    "test:unit": "tsx tests/prettify.test.ts && tsx tests/glob.test.ts && tsx tests/analyze.test.ts && tsx tests/sourcemap.test.ts",
+    "test:unit": "tsx tests/prettify.test.ts && tsx tests/glob.test.ts && tsx tests/analyze.test.ts && tsx tests/sourcemap.test.ts && tsx tests/mapping.test.ts",
     "test:e2e": "npm run build && playwright test"
   },
   "dependencies": {

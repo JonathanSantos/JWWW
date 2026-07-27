@@ -43,11 +43,42 @@ export type WatchEvent = {
   stack?: string | null
 }
 
+/** Uma função instrumentada pelo mapa de execução. */
+export type MapFunction = {
+  id: number
+  name: string | null
+  nodeType: string
+  start: number
+  end: number
+  /** posição no bundle, para localizar no editor */
+  line: number
+  column: number
+  /** posição do identificador — é onde o source map guarda o nome original */
+  nameLine: number
+  nameColumn: number
+}
+
+export type MapCatalogEvent = {
+  tabId: number
+  /** identifica esta instrumentação; muda a cada recarga */
+  fileId: string
+  url: string
+  /** URL do source map do bundle, quando existe */
+  sourceMappingUrl: string | null
+  functions: MapFunction[]
+}
+
+/** Lote agregado na página: [arquivo, id, chamadas, milissegundos] */
+export type MapCountsEvent = {
+  tabId: number
+  lote: Array<[string, number, number, number]>
+}
+
 export type OverrideStatusEvent = {
   overrideId: string
   url: string
   tabId: number
-  kind: 'edit' | 'expose' | 'sri' | 'watch'
+  kind: 'edit' | 'expose' | 'sri' | 'watch' | 'map'
   status: OverrideStatus
   message?: string
   label?: string
@@ -122,6 +153,8 @@ export interface JwwwApi {
   on(channel: 'override:status', cb: (ev: OverrideStatusEvent) => void): () => void
   on(channel: 'bus:message', cb: (msg: BusMessage) => void): () => void
   on(channel: 'watch:event', cb: (ev: WatchEvent) => void): () => void
+  on(channel: 'map:catalog', cb: (ev: MapCatalogEvent) => void): () => void
+  on(channel: 'map:counts', cb: (ev: MapCountsEvent) => void): () => void
   on(
     channel: 'overrides:changed' | 'scripts:changed' | 'rules:changed' | 'workspaces:changed',
     cb: () => void

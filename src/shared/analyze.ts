@@ -196,6 +196,87 @@ export function listFunctions(text: string): SelectionInfo[] {
   return found
 }
 
+export type InstrumentableFunction = {
+  id: number
+  name: string | null
+  nodeType: string
+  start: number
+  end: number
+  /**
+   * Offset do identificador da função. O source map ancora o nome original
+   * aí — não na palavra `function` —, então é esta posição que traduz `o` de
+   * volta para `calcularDesconto`.
+   */
+  nameOffset: number
+  /** declaração nomeada: instrumenta reatribuindo o binding, sem mexer no corpo */
+  declaration: boolean
+}
+
+function nameOffsetOf(node: AnyNode, parent: AnyNode | null): number {
+  if (typeof node.id?.start === 'number') return node.id.start
+  if (parent?.type === 'VariableDeclarator' && typeof parent.id?.start === 'number') return parent.id.start
+  if (parent?.type === 'Property' && typeof parent.key?.start === 'number') return parent.key.start
+  if (parent?.type === 'AssignmentExpression' && typeof parent.left?.start === 'number') {
+    return parent.left.start
+  }
+  return node.start
+}
+
+/**
+ * Funções que dá para instrumentar **só com inserções** — nunca substituindo
+ * um intervalo. Isso é o que permite instrumentar milhares de funções aninhadas
+ * de uma vez: pontos de inserção não se invalidam entre si, intervalos sim.
+ *
+ * Métodos de classe e atalhos de objeto (`foo() {}`) ficam de fora: o intervalo
+ * do nó cobre só `(){...}`, então embrulhar geraria sintaxe inválida.
+ */
+export function collectInstrumentable(text: string): InstrumentableFunction[] {
+  const program = parseProgram(text)
+  if (!program) return []
+
+  const encontradas: InstrumentableFunction[] = []
+  let proximoId = 0
+
+  const visitar = (node: AnyNode, parent: AnyNode | null) => {
+    if (FUNCTION_TYPES.has(node.type)) {
+      const metodo =
+        parent?.type === 'MethodDefinition' ||
+        parent?.type === 'PropertyDefinition' ||
+        (parent?.type === 'Property' && (parent.method === true || parent.kind !== 'init'))
+
+      const declaracaoNomeada = node.type === 'FunctionDeclaration' && Boolean(node.id?.name)
+      // Declaração sem nome (`export default function(){}`) não dá para
+      // reatribuir nem embrulhar: é statement.
+      const declaracaoAnonima = node.type === 'FunctionDeclaration' && !node.id?.name
+
+      if (!metodo && !declaracaoAnonima) {
+        encontradas.push({
+          id: proximoId++,
+          name: nameOf(node, parent),
+          nodeType: node.type,
+          start: node.start,
+          end: node.end,
+          nameOffset: nameOffsetOf(node, parent),
+          declaration: declaracaoNomeada
+        })
+      }
+    }
+    for (const key of Object.keys(node)) {
+      if (key === 'type' || key === 'start' || key === 'end') continue
+      const child = node[key]
+      if (Array.isArray(child)) {
+        for (const c of child) {
+          if (c && typeof c === 'object' && typeof c.type === 'string') visitar(c, node)
+        }
+      } else if (child && typeof child === 'object' && typeof child.type === 'string') {
+        visitar(child, node)
+      }
+    }
+  }
+  visitar(program, null)
+  return encontradas
+}
+
 /** O trecho isolado é uma expressão? (usado quando não dá para analisar o arquivo todo) */
 export function isExpressionSnippet(snippet: string): boolean {
   try {

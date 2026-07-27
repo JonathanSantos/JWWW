@@ -29,6 +29,10 @@ contextBridge.exposeInMainWorld('jwww', {
   _watch(event: unknown) {
     ipcRenderer.send('jwww:watch', event)
   },
+  /** Interno: lotes agregados do mapa de execução. */
+  _map(event: unknown) {
+    ipcRenderer.send('jwww:map', event)
+  },
   bus: {
     emit(topic: string, data?: unknown) {
       if (typeof topic !== 'string' || !topic) throw new Error('jwww.bus.emit(topic, data): topic deve ser string')

@@ -5,6 +5,8 @@ import type { OverrideStatus } from '@shared/types'
 import { overrideMatches } from '@shared/glob'
 import { declaredNames, describeRange, isExpressionSnippet, parses } from '@shared/analyze'
 import { applyWatch } from './watch'
+import { applyExecutionMap } from './mapping'
+import type { MapFunction } from '@shared/types'
 
 const dmp = new diff_match_patch()
 dmp.Match_Threshold = 0.4
@@ -33,7 +35,7 @@ function fileLabel(url: string): string {
 export type ApplyResult = {
   overrideId: string
   url: string
-  kind: 'edit' | 'expose' | 'watch'
+  kind: 'edit' | 'expose' | 'watch' | 'map'
   status: OverrideStatus
   message?: string
   label?: string
@@ -145,9 +147,13 @@ export class OverrideEngine {
     return this.getAll().some((o) => o.enabled)
   }
 
-  apply(url: string, body: string): { text: string; results: ApplyResult[] } {
+  apply(
+    url: string,
+    body: string
+  ): { text: string; results: ApplyResult[]; catalog: { fileId: string; functions: MapFunction[] } | null } {
     const entries = this.enabledFor(url)
     const results: ApplyResult[] = []
+    let catalog: { fileId: string; functions: MapFunction[] } | null = null
     let text = body
 
     for (const o of entries.filter((e) => e.kind === 'edit')) {
@@ -204,6 +210,29 @@ export class OverrideEngine {
       })
     }
 
-    return { text, results }
+    // O mapa vai por último: instrumenta o resultado final, já com as edições
+    // e observações do dev aplicadas.
+    for (const o of entries.filter((e) => e.kind === 'map')) {
+      /**
+       * Determinístico a partir do conteúdo: o mesmo arquivo buscado de novo
+       * (um `fetch` da própria página, por exemplo) reinstrumenta e precisa
+       * cair no mesmo id, senão as contagens vivas ficariam órfãs. Se o
+       * arquivo mudar no servidor, o id muda junto — que é o desejado.
+       */
+      const fileId = sha256(`${url}\n${text}`).slice(0, 8)
+      const r = applyExecutionMap(text, fileId)
+      text = r.text
+      if (r.status === 'applied') catalog = { fileId, functions: r.catalog }
+      results.push({
+        overrideId: o.id,
+        url,
+        kind: 'map',
+        status: r.status,
+        message: r.message,
+        label: `mapa de execução (${r.catalog.length} funções)`
+      })
+    }
+
+    return { text, results, catalog }
   }
 }

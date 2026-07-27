@@ -1,5 +1,6 @@
 import type { WebContents } from 'electron'
-import type { NetEntry, OverrideStatusEvent, ThrottlePreset } from '@shared/types'
+import type { MapCatalogEvent, NetEntry, OverrideStatusEvent, ThrottlePreset } from '@shared/types'
+import { findSourceMappingURL, resolveSourceMapURL } from '@shared/sourcemap'
 import type { NetRule } from '@shared/schemas'
 import { OverrideEngine, stripHash } from './overrides'
 import { ruleMatches } from './netrules'
@@ -35,6 +36,13 @@ type Deps = {
   emitNet: (tabId: number, entries: NetEntry[]) => void
   emitNetClear: (tabId: number) => void
   emitOverrideStatus: (ev: OverrideStatusEvent) => void
+  emitMapCatalog: (ev: MapCatalogEvent) => void
+}
+
+/** O source map do bundle é resolvido aqui porque só o main tem o corpo cru. */
+function resolveMapUrl(body: string, resourceUrl: string): string | null {
+  const referencia = findSourceMappingURL(body)
+  return referencia ? resolveSourceMapURL(referencia, resourceUrl) : null
 }
 
 export class TabDebugger {
@@ -256,6 +264,15 @@ export class TabDebugger {
         text = applied.text
         for (const r of applied.results) {
           this.deps.emitOverrideStatus({ ...r, tabId: this.tabId })
+        }
+        if (applied.catalog) {
+          this.deps.emitMapCatalog({
+            tabId: this.tabId,
+            url,
+            fileId: applied.catalog.fileId,
+            sourceMappingUrl: resolveMapUrl(original, url),
+            functions: applied.catalog.functions
+          })
         }
       }
 

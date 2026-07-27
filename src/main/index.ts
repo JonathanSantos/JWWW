@@ -6,6 +6,7 @@ import { ListStore } from './store'
 import { OverrideEngine } from './overrides'
 import { buildUserScriptBundle } from './userscripts'
 import { WATCH_RUNTIME } from './watch'
+import { MAP_RUNTIME } from './mapping'
 import { TabDebugger } from './cdp'
 import { TabManager } from './tabs'
 import { registerIpc } from './ipc'
@@ -35,8 +36,14 @@ function createWindow() {
    * (só quando há algum watch ativo) e os userscripts.
    */
   const buildInjection = (): string | null => {
-    const precisaWatch = overridesStore.all().some((o) => o.enabled && o.kind === 'watch')
-    const partes = [precisaWatch ? WATCH_RUNTIME : null, buildUserScriptBundle(scriptsStore.all())]
+    const ativos = overridesStore.all().filter((o) => o.enabled)
+    const precisaWatch = ativos.some((o) => o.kind === 'watch')
+    const precisaMap = ativos.some((o) => o.kind === 'map')
+    const partes = [
+      precisaWatch ? WATCH_RUNTIME : null,
+      precisaMap ? MAP_RUNTIME : null,
+      buildUserScriptBundle(scriptsStore.all())
+    ]
     const juntas = partes.filter(Boolean).join('\n')
     return juntas.length > 0 ? juntas : null
   }
@@ -76,7 +83,8 @@ function createWindow() {
       getDisableCsp: () => disableCsp,
       emitNet: (_tabId, entries) => uiSend('net:upsert', entries),
       emitNetClear: (tabId) => uiSend('net:clear', tabId),
-      emitOverrideStatus: (ev) => uiSend('override:status', ev)
+      emitOverrideStatus: (ev) => uiSend('override:status', ev),
+      emitMapCatalog: (ev) => uiSend('map:catalog', ev)
     })
 
   tabManager = new TabManager(win, makeDebugger)

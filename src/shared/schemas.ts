@@ -16,7 +16,8 @@ export const OverrideEntrySchema = z.object({
    * override sobreviver a bundles com hash no nome (`app.a3f9b1.js`).
    */
   pattern: z.string().optional(),
-  kind: z.enum(['edit', 'expose', 'watch']),
+  /** 'map' instrumenta o arquivo inteiro para descobrir o que executa */
+  kind: z.enum(['edit', 'expose', 'watch', 'map']),
   enabled: z.boolean().default(true),
   contentType: z.enum(['js', 'css', 'html', 'other']).default('js'),
   originalHash: z.string(),

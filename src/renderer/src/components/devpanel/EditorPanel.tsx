@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import Editor, { type OnMount } from '@monaco-editor/react'
-import { Braces, Eye, GitCompare, Globe2, RotateCw, Save, Trash2, X } from 'lucide-react'
+import { Braces, Eye, GitCompare, Globe2, Radar, RotateCw, Save, Trash2, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -22,7 +22,8 @@ import { contentTypeFromLanguage, fileLabel, hostOf } from '@/lib/lang'
 import { applyPrettyEdits, canPrettify, makeAnchor, mapRange } from '@/lib/prettify'
 import { DiffView, type DiffMode } from './DiffView'
 import { overrideMatches, suggestPattern } from '@shared/glob'
-import { describeForHumans, describeRange } from '@shared/analyze'
+import { collectInstrumentable, describeForHumans, describeRange } from '@shared/analyze'
+import { LIMITE_FUNCOES } from '@shared/limits'
 import { languageFromSource, loadSourceMap, originalOffsetToGenerated } from '@/lib/sourcemap'
 import type { OverrideEntry } from '@shared/schemas'
 
@@ -150,6 +151,7 @@ export function EditorPanel() {
   const exposeOverrides = file
     ? overrides.filter((o) => o.kind === 'expose' && overrideMatches(o, file.url))
     : []
+  const mapOverride = file ? overrides.find((o) => o.kind === 'map' && overrideMatches(o, file.url)) : undefined
   const lastStatus = editOverride
     ? [...statuses].reverse().find((st) => st.overrideId === editOverride.id)
     : undefined
@@ -362,6 +364,51 @@ export function EditorPanel() {
     setWatchOpen(false)
     toast.success(`Observando "${label}"`, {
       description: 'Recarregue a página — cada execução aparece no painel Observar.'
+    })
+  }
+
+  async function toggleMapa() {
+    const f = currentFile()
+    if (!f) return
+    const existente = useApp.getState().overrides.find((o) => o.kind === 'map' && overrideMatches(o, f.url))
+    if (existente) {
+      await window.api.overrides.remove(existente.id)
+      toast.success('Mapeamento desligado', { description: 'Recarregue a página para remover a instrumentação.' })
+      return
+    }
+
+    const base = f.pretty ? f.pretty.anchor.base : f.text
+    const total = collectInstrumentable(base).length
+    if (total === 0) {
+      toast.error('Nenhuma função instrumentável neste arquivo.')
+      return
+    }
+    if (total > LIMITE_FUNCOES) {
+      toast.error(`Arquivo com ${total.toLocaleString('pt-BR')} funções`, {
+        description: `Acima do limite de ${LIMITE_FUNCOES.toLocaleString('pt-BR')} — mapear travaria a página.`
+      })
+      return
+    }
+
+    await window.api.overrides.save({
+      id: crypto.randomUUID(),
+      url: f.url,
+      kind: 'map',
+      enabled: true,
+      contentType: 'js',
+      originalHash: await sha256Hex(base),
+      originalText: '',
+      updatedAt: Date.now()
+    })
+    toast.success(`${total.toLocaleString('pt-BR')} funções instrumentadas`, {
+      description: 'Recarregue a página e acompanhe no painel Mapa.',
+      action: {
+        label: 'Recarregar',
+        onClick: () => {
+          const tab = useApp.getState().tabs.find((t) => t.active)
+          if (tab) window.api.tabs.reload(tab.id, true)
+        }
+      }
     })
   }
 
@@ -599,6 +646,15 @@ export function EditorPanel() {
             </Button>
             <Button size="sm" variant="secondary" className="h-6 px-2 text-[11px]" onClick={openWatchDialog}>
               <Eye className="mr-1 h-3 w-3" /> Observar
+            </Button>
+            <Button
+              size="sm"
+              variant={mapOverride ? 'secondary' : 'ghost'}
+              className={cn('h-6 px-2 text-[11px]', mapOverride && 'text-sky-400')}
+              onClick={toggleMapa}
+              title="Instrumentar todas as funções para descobrir o que executa"
+            >
+              <Radar className="mr-1 h-3 w-3" /> {mapOverride ? 'Mapeando' : 'Mapear'}
             </Button>
           </>
         )}

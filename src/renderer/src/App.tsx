@@ -20,7 +20,11 @@ export default function App() {
     const subs = [
       window.api.on('tabs:state', s.setTabs),
       window.api.on('net:upsert', s.upsertNet),
-      window.api.on('net:clear', s.clearNet),
+      window.api.on('net:clear', (tabId) => {
+        // navegação nova: log de rede e contagens do mapa começam do zero
+        s.clearNet(tabId)
+        s.clearMapCountsForTab(tabId)
+      }),
       window.api.on('override:status', (ev) => {
         s.pushStatus(ev)
         if (ev.status === 'failed') {
@@ -33,6 +37,8 @@ export default function App() {
       }),
       window.api.on('bus:message', s.pushBus),
       window.api.on('watch:event', s.pushWatch),
+      window.api.on('map:catalog', s.setMapCatalog),
+      window.api.on('map:counts', s.addMapCounts),
       window.api.on('overrides:changed', refreshOverrides),
       window.api.on('scripts:changed', refreshScripts),
       window.api.on('rules:changed', refreshRules),
